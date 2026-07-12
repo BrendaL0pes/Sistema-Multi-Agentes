@@ -1,0 +1,34 @@
+{
+  "weak_words": [
+    {
+      "term": "rápido",
+      "reason": "Não define tempo máximo, carga ou contexto de uso.",
+      "clarification_question": "Qual é o tempo máximo aceitável e em qual cenário?"
+    },
+    {
+      "term": "fácil",
+      "reason": "Depende da experiência do usuário e não define critério mensurável.",
+      "clarification_question": "Como será medido que a tarefa é fácil para o usuário-alvo?"
+    },
+    {
+      "term": "intuitivo",
+      "reason": "É subjetivo e precisa de evidência de usabilidade.",
+      "clarification_question": "Qual métrica ou teste de usabilidade indicará que a interface é intuitiva?"
+    },
+    {
+      "term": "adequado",
+      "reason": "Não explicita o padrão mínimo esperado.",
+      "clarification_question": "Adequado em relação a qual regra, métrica ou necessidade?"
+    },
+    {
+      "term": "simples",
+      "reason": "Não informa complexidade aceitável nem comportamento verificável.",
+      "clarification_question": "O que deve ser simplificado e qual critério confirma isso?"
+    },
+    {
+      "term": "eficiente",
+      "reason": "Não define métrica de desempenho, custo ou uso de recursos.",
+      "clarification_question": "Qual métrica define eficiência neste requisito?"
+    }
+  ]
+}
