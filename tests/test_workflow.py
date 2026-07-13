@@ -24,13 +24,14 @@ def test_workflow_creates_report_and_persists_requirements() -> None:
     result = run_requirements_workflow(
         transcript_path="data/synthetic_transcripts/transcript_01_checkout.md",
         database_path=TEST_DATABASE_PATH,
+        use_llm=False,
     )
 
     assert result.success
     assert result.report is not None
     assert len(result.report.requirements) == 4
     assert result.report.ambiguities
-    assert result.report.conflicts
+    assert result.report.conflicts == []
     assert result.report.priorities
     assert "TRANSCRIPT_01_CHECKOUT-003" in result.report_markdown
 

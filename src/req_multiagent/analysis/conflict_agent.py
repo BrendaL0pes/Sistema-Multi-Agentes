@@ -88,10 +88,15 @@ def load_existing_requirements(
 def detect_conflicts(
     requirements: list[Requirement],
     existing_requirements_path: Path | str | None = None,
+    compare_existing: bool = True,
 ) -> list[ConflictFinding]:
     """Detect conflicts against existing requirements and current batch."""
 
-    existing_requirements = load_existing_requirements(existing_requirements_path)
+    existing_requirements = (
+        load_existing_requirements(existing_requirements_path)
+        if compare_existing
+        else []
+    )
     findings: list[ConflictFinding] = []
 
     for requirement in requirements:
@@ -112,7 +117,7 @@ def detect_conflicts_with_llm(
     requirements: list[Requirement],
     existing_requirements_path: Path | str | None = None,
 ) -> list[ConflictFinding]:
-    """Detect conflicts using the configured Agno LLM agent."""
+    """Detect conflicts inside a project, optionally including a baseline file."""
 
     settings = load_settings()
     if not settings.groq_api_key:
@@ -130,21 +135,27 @@ def detect_conflicts_with_llm(
     class LlmConflictFindings(BaseModel):
         findings: list[LlmConflictFinding]
 
-    existing_requirements = load_existing_requirements(existing_requirements_path)
+    existing_requirements = (
+        load_existing_requirements(existing_requirements_path)
+        if existing_requirements_path
+        else []
+    )
     valid_ids = {
         *[requirement.id for requirement in requirements],
         *[requirement.id for requirement in existing_requirements],
     }
     prompt = (
-        "Compare requisitos novos com requisitos existentes e tambem entre si. "
+        "Compare os requisitos do projeto entre si"
+        + (" e tambem com requisitos existentes" if existing_requirements else "")
+        + ". "
         "Retorne somente conflitos reais, citando IDs existentes na entrada. "
         "Conflito significa contradicao objetiva: um requisito permite algo que "
         "outro proibe, exige comportamento incompatível, ou define regra que nao "
         "pode coexistir com a outra. Nao marque como conflito quando o requisito "
         "novo apenas detalha, reforca, complementa ou implementa um requisito "
         "existente. Quando nao houver contradicao objetiva, nao retorne achado.\n\n"
-        f"Requisitos novos:\n{_requirements_prompt(requirements)}\n\n"
-        "Requisitos existentes:\n"
+        f"Requisitos do projeto:\n{_requirements_prompt(requirements)}\n\n"
+        "Requisitos existentes opcionais:\n"
         f"{_existing_requirements_prompt(existing_requirements)}"
     )
     payload = run_groq_json(
@@ -308,6 +319,8 @@ def _requirements_prompt(requirements: list[Requirement]) -> str:
 
 
 def _existing_requirements_prompt(requirements: list[ExistingRequirement]) -> str:
+    if not requirements:
+        return "- Nenhuma base externa informada."
     return "\n".join(
         f"- {item.id}: {item.description}"
         for item in requirements

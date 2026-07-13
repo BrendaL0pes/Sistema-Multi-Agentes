@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 
-class RequirementType(str, Enum):
+class RequirementType(StrEnum):
     """Supported requirement categories."""
 
     FUNCTIONAL = "functional"
     NON_FUNCTIONAL = "non_functional"
 
 
-class FindingSeverity(str, Enum):
+class FindingSeverity(StrEnum):
     """Severity levels for analysis findings."""
 
     LOW = "low"
@@ -23,7 +23,7 @@ class FindingSeverity(str, Enum):
     HIGH = "high"
 
 
-class MoscowPriority(str, Enum):
+class MoscowPriority(StrEnum):
     """MoSCoW priority categories."""
 
     MUST = "must"
@@ -116,4 +116,5 @@ class ConsolidatedReport:
     priorities: list[PriorityAssessment] = field(default_factory=list)
     summary: str = ""
     limitations: list[str] = field(default_factory=list)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    chat_messages: list[dict[str, str]] = field(default_factory=list)

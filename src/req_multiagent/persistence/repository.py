@@ -247,6 +247,7 @@ def _report_from_payload(payload: dict[str, Any]) -> ConsolidatedReport:
         summary=payload.get("summary", ""),
         limitations=payload.get("limitations", []),
         created_at=datetime.fromisoformat(payload["created_at"]),
+        chat_messages=payload.get("chat_messages", []),
     )
 
 

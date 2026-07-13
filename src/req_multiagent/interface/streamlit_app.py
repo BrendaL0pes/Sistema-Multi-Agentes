@@ -34,6 +34,7 @@ def main() -> None:
     importlib.reload(repository_module)
     repository = repository_module.RequirementsRepository(settings.database_path)
     persist = _render_sidebar(repository)
+    st.session_state["persist_history"] = persist
 
     _render_header()
     input_payload = _render_input_area()
@@ -60,7 +61,7 @@ def main() -> None:
         st.error(result.error or "Nao foi possivel executar a analise.")
         return
 
-    _render_result(result)
+    _render_result(result, repository, persist)
 
 
 def _render_sidebar(repository) -> bool:
@@ -262,7 +263,7 @@ def _render_empty_state() -> None:
         )
 
 
-def _render_result(result) -> None:
+def _render_result(result, repository, persist: bool) -> None:
     report = result.report
     if report is None:
         st.warning("Nenhum relatorio foi produzido.")
@@ -279,7 +280,15 @@ def _render_result(result) -> None:
     metrics[3].metric("Prioridades", len(report.priorities))
 
     tabs = st.tabs(
-        ["Requisitos", "Ambiguidades", "Conflitos", "Priorizacao", "Relatorio"]
+        [
+            "Requisitos",
+            "Ambiguidades",
+            "Conflitos",
+            "Priorizacao",
+            "Adicionar conversa",
+            "Ajustes",
+            "Relatorio",
+        ]
     )
     with tabs[0]:
         _render_requirements_table(report)
@@ -290,6 +299,10 @@ def _render_result(result) -> None:
     with tabs[3]:
         _render_priorities(report)
     with tabs[4]:
+        _render_increment_project(report, persist)
+    with tabs[5]:
+        _render_adjustment_chat(report, repository, persist)
+    with tabs[6]:
         st.markdown(result.report_markdown)
 
 
@@ -363,6 +376,135 @@ def _render_priorities(report) -> None:
     )
 
 
+def _render_increment_project(report, persist: bool) -> None:
+    st.subheader("Adicionar conversa ao projeto")
+    st.caption(
+        "Cole ou importe uma nova parte da conversa. O agente compara com os "
+        "requisitos atuais do projeto e cria ou atualiza requisitos."
+    )
+
+    mode = st.radio(
+        "Entrada incremental",
+        options=["Colar conversa", "Importar arquivo"],
+        horizontal=True,
+        key=f"increment_mode_{report.id}",
+    )
+    transcript_text = ""
+    source_name = "incremento.md"
+
+    if mode == "Colar conversa":
+        transcript_text = st.text_area(
+            "Nova conversa",
+            height=180,
+            key=f"increment_text_{report.id}",
+        )
+        source_name = "incremento_colado.md"
+    else:
+        uploaded_file = st.file_uploader(
+            "Arquivo incremental",
+            type=[extension.removeprefix(".") for extension in ACCEPTED_EXTENSIONS],
+            key=f"increment_file_{report.id}",
+        )
+        if uploaded_file is not None:
+            transcript_text = _decode_uploaded_file(uploaded_file.getvalue())
+            source_name = uploaded_file.name
+
+    if st.button(
+        "Incrementar requisitos",
+        type="primary",
+        use_container_width=True,
+        disabled=not transcript_text.strip(),
+        key=f"increment_button_{report.id}",
+    ):
+        with st.spinner("Atualizando projeto com nova conversa..."):
+            _reload_pipeline_modules()
+            result = requirements_workflow.increment_requirements_project(
+                report=report,
+                transcript_text=transcript_text,
+                source_name=source_name,
+                persist=persist,
+                use_llm=True,
+            )
+        _handle_project_update_result(result)
+
+
+def _render_adjustment_chat(report, repository, persist: bool) -> None:
+    st.subheader("Chat com agente")
+    st.caption(
+        "Faça perguntas sobre a análise ou peça ajustes como unir, remover, "
+        "reclassificar ou adicionar critérios."
+    )
+    for message in report.chat_messages:
+        with st.chat_message(message["role"]):
+            st.write(message["content"])
+
+    user_message = st.chat_input(
+        "Pergunte algo ou peça um ajuste nos requisitos",
+        key=f"adjustment_input_{report.id}",
+    )
+    if user_message:
+        chat_messages = [
+            *report.chat_messages,
+            {"role": "user", "content": user_message},
+        ]
+        if _looks_like_question(user_message):
+            with st.spinner("Consultando agente..."):
+                _reload_pipeline_modules()
+                result = requirements_workflow.answer_requirements_project_question(
+                    report=report,
+                    question=user_message,
+                )
+        else:
+            with st.spinner("Aplicando ajuste no projeto..."):
+                _reload_pipeline_modules()
+                result = requirements_workflow.adjust_requirements_project(
+                    report=report,
+                    instruction=user_message,
+                    persist=False,
+                    use_llm=True,
+                )
+
+        if result.success and result.report is not None:
+            result.report.chat_messages = [
+                *chat_messages,
+                {
+                    "role": "assistant",
+                    "content": result.message or "Projeto atualizado.",
+                },
+            ]
+            result.report_markdown = render_report_markdown(result.report)
+            if persist:
+                repository.save_report(result.report)
+        _handle_project_update_result(result)
+
+
+def _looks_like_question(message: str) -> bool:
+    normalized = message.strip().lower()
+    question_starters = (
+        "por que",
+        "porque",
+        "qual",
+        "quais",
+        "como",
+        "o que",
+        "onde",
+        "quando",
+        "explique",
+        "me explique",
+    )
+    return normalized.endswith("?") or normalized.startswith(question_starters)
+
+
+def _handle_project_update_result(result) -> None:
+    if not result.success:
+        st.error(result.error or "Nao foi possivel atualizar o projeto.")
+        return
+    st.session_state["workflow_result"] = result
+    if result.message:
+        st.success(result.message)
+    st.rerun()
+
+
 def _decode_uploaded_file(content: bytes) -> str:
     try:
         return content.decode("utf-8")
@@ -394,6 +536,7 @@ def _reload_pipeline_modules() -> None:
         "req_multiagent.analysis.conflict_agent",
         "req_multiagent.analysis.prioritization_agent",
         "req_multiagent.orchestration.consolidator_agent",
+        "req_multiagent.orchestration.project_update_agent",
     ]
     for module_name in module_names:
         importlib.reload(importlib.import_module(module_name))
