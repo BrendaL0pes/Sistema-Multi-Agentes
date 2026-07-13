@@ -6,6 +6,7 @@ from req_multiagent.analysis.ambiguity_agent import (
     DEFAULT_ISO_CRITERIA_PATH,
     DEFAULT_WEAK_WORDS_PATH,
     detect_ambiguities,
+    load_weak_words,
 )
 from req_multiagent.ingestion.extractor_agent import extract_requirements_from_file
 from req_multiagent.models import RequirementType
@@ -95,3 +96,11 @@ def test_skips_functional_requirements_without_weak_words(
     )
 
     assert findings == []
+
+
+def test_load_weak_words_returns_catalog() -> None:
+    weak_words = load_weak_words()
+
+    assert len(weak_words) == 6
+    assert weak_words[0].term
+    assert weak_words[0].clarification_question

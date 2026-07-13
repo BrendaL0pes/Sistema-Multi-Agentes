@@ -141,6 +141,24 @@ Regras adotadas na priorização determinística:
 - demais requisitos funcionais e não funcionais são classificados como `should`
   ou `could`, conforme o contexto.
 
+### Agente de Lacunas
+
+Arquivo: `src/req_multiagent/analysis/gap_agent.py`
+
+- `create_gap_agent()`: cria o agente Agno responsável por identificar lacunas
+  em execuções com modelo real.
+- `detect_gaps()`: detecta trechos narrativos sem regra formal na transcrição e
+  requisitos incompletos em relação à base existente.
+- Saída: lista de `GapFinding` com tópico, explicação e perguntas de
+  clarificação.
+
+Casos cobertos:
+
+- `transcript_02_support.md`: dúvida narrativa sobre envio automático sem
+  revisão humana.
+- `transcript_03_approvals.md`: ausência do gestor substituto e registro de
+  decisão sem os campos exigidos por `REQ-EXIST-003`.
+
 ## Validação da análise
 
 A validação da parte de análise é demonstrada por testes automatizados em
@@ -154,19 +172,25 @@ A validação da parte de análise é demonstrada por testes automatizados em
 | `transcript_01_checkout.md` | cancelamento vs. base existente | conflito |
 | `transcript_02_support.md` | resposta automática vs. revisão humana | conflito |
 | `transcript_03_approvals.md` | lacuna de aprovação, sem conflito direto | conflito |
+| `transcript_02_support.md` | dúvida narrativa sem regra formal | lacuna |
+| `transcript_03_approvals.md` | ausência do gestor e registro incompleto | lacuna |
+| `transcript_01_checkout.md` | must/could/wont após análise | priorização |
 
 Arquivos de teste:
 
 - `tests/test_ambiguity_agent.py`
 - `tests/test_conflict_agent.py`
+- `tests/test_prioritization_agent.py`
+- `tests/test_gap_agent.py`
+- `tests/test_analysis_pipeline.py`
 
-Para executar apenas os testes da análise:
+Para executar os testes da análise:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pytest tests/test_ambiguity_agent.py tests/test_conflict_agent.py -v
+pytest tests/test_ambiguity_agent.py tests/test_conflict_agent.py tests/test_prioritization_agent.py tests/test_gap_agent.py tests/test_analysis_pipeline.py -v
 ```
 
 Esses testes não exigem `GROQ_API_KEY`, porque exercitam a lógica
@@ -181,4 +205,5 @@ versionadas para demonstração com Agno em execuções com modelo real.
   comparação semântica profunda entre requisitos.
 - A priorização MoSCoW é baseada em sinais textuais e nos achados prévios de
   ambiguidade e conflito; não substitui decisão humana de produto.
-
+- A detecção de lacunas usa sinais narrativos e regras de completude; não cobre
+  todas as formas possíveis de requisito incompleto.
