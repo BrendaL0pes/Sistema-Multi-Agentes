@@ -93,6 +93,20 @@ class ConflictFinding:
 
 
 @dataclass
+class GapFinding:
+    """Gap or missing information detected in requirements or transcripts."""
+
+    requirement_id: str | None
+    topic: str
+    explanation: str
+    clarification_questions: list[str]
+    severity: FindingSeverity = FindingSeverity.MEDIUM
+    evidence: list[Evidence] = field(default_factory=list)
+    confidence: float | None = None
+    limitations: list[str] = field(default_factory=list)
+
+
+@dataclass
 class PriorityAssessment:
     """MoSCoW priority assigned to a requirement."""
 
@@ -113,6 +127,7 @@ class ConsolidatedReport:
     requirements: list[Requirement]
     ambiguities: list[AmbiguityFinding] = field(default_factory=list)
     conflicts: list[ConflictFinding] = field(default_factory=list)
+    gaps: list[GapFinding] = field(default_factory=list)
     priorities: list[PriorityAssessment] = field(default_factory=list)
     summary: str = ""
     limitations: list[str] = field(default_factory=list)
