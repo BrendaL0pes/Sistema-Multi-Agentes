@@ -1,9 +1,26 @@
-# Sistema-Multi-Agentes
+# ReqLens - Sistema Multiagente de Requisitos
 
-Sistema multiagente para apoiar Engenharia de Requisitos. O projeto recebe
+Sistema multiagente para apoiar **Engenharia de Requisitos**. O projeto recebe
 transcrições sintéticas de reuniões com stakeholders, extrai requisitos
-candidatos, analisa ambiguidade, conflito e priorização, e prepara uma base
-de conhecimento local para justificar os achados.
+candidatos, identifica ambiguidades, conflitos e lacunas, prioriza requisitos
+com MoSCoW, gera um relatório final rastreável e mantém uma base de
+conhecimento local para justificar os achados.
+
+## Assunto Geral Escolhido
+
+Engenharia de Requisitos.
+
+## Problema
+
+Conversas informais com stakeholders frequentemente geram requisitos ambíguos,
+incompletos ou conflitantes com decisões já documentadas. O sistema ajuda uma
+equipe pequena de software a transformar essas transcrições em artefatos de
+requisitos mais claros, revisáveis e rastreáveis.
+
+## Usuário-Alvo
+
+Estudantes, analistas de requisitos e equipes pequenas de desenvolvimento que
+precisam revisar requisitos antes de implementar funcionalidades.
 
 ## Integrantes
 
@@ -13,156 +30,187 @@ de conhecimento local para justificar os achados.
 | `samuel-fossari` | Samuel Anthonny Fossari Monteiro   | 2410100276   |
 | `gs-Leo`         | Leonardo Goncalves da Silva        | 2510100161   |
 
-## Fontes de dados e corpus
+## Fluxo Principal
+
+1. O usuário cola uma conversa de stakeholder ou importa uma transcrição `.md`/`.txt`.
+2. O agente extrator identifica requisitos funcionais e não funcionais.
+3. O agente de ambiguidade procura termos vagos com apoio do corpus.
+4. O agente de conflito compara requisitos novos com requisitos existentes.
+5. O agente de lacunas identifica regras ausentes ou requisitos incompletos.
+6. O agente de priorização atribui MoSCoW.
+7. O agente consolidador gera um relatório com rastreabilidade.
+8. O resultado é salvo em SQLite e pode ser visto via CLI ou Streamlit.
+
+## Tecnologias
+
+- Python 3.11+
+- Agno
+- Groq
+- Streamlit
+- SQLite
+- Pytest
+- ChromaDB como dependência preparada para evolução da base vetorial
+
+## Instalação
+
+```bash
+uv sync --extra dev
+```
+
+O `uv` cria e mantém o ambiente virtual local em `.venv/`. Para ativar
+manualmente no Windows:
+
+```bash
+.venv\Scripts\activate
+```
+
+## Configuração
+
+Copie `.env.example` para `.env` e preencha a chave quando for executar agentes
+com modelo real.
+
+```env
+MODEL_PROVIDER=groq
+MODEL_ID=llama-3.3-70b-versatile
+USE_LLM_AGENTS=true
+GROQ_API_KEY=your-groq-api-key
+DATABASE_PATH=storage/requirements.db
+KNOWLEDGE_BASE_PATH=storage/knowledge_base
+```
+
+Por padrão, o projeto usa a LLM Groq em todos os agentes quando `GROQ_API_KEY`
+está configurada. Para rodar sem API externa, desligue a opção **Usar LLM
+Groq** na interface ou defina `USE_LLM_AGENTS=false` no `.env`.
+
+## Execução
+
+Reconstruir a base de conhecimento:
+
+```bash
+uv run python scripts/rebuild_knowledge_base.py
+```
+
+Executar o pipeline pelo CLI:
+
+```bash
+uv run python scripts/run_pipeline.py
+```
+
+Executar com uma transcrição específica:
+
+```bash
+uv run python scripts/run_pipeline.py data/synthetic_transcripts/transcript_02_support.md
+```
+
+Salvar o relatório em Markdown:
+
+```bash
+uv run python scripts/run_pipeline.py --output storage/report.md
+```
+
+Executar a interface Streamlit:
+
+```bash
+uv run streamlit run src/req_multiagent/interface/streamlit_app.py
+```
+
+Na interface, a conversa pode ser informada de duas formas:
+
+- Colar o texto diretamente no campo da tela.
+- Importar um arquivo com a conversa nos formatos `.md` ou `.txt`.
+
+O sistema aceita conversas naturais. Marcadores como `[RF]` e `[RNF]` continuam
+funcionando nos exemplos sintéticos, mas não são obrigatórios na interface.
+
+## Estrutura de Diretórios
+
+```text
+data/
+  existing_requirements/
+  synthetic_transcripts/
+docs/
+  corpus/
+scripts/
+src/
+  req_multiagent/
+    analysis/
+    ingestion/
+    interface/
+    orchestration/
+    persistence/
+tests/
+```
+
+## Fontes de Dados e Corpus
 
 O projeto usa apenas dados sintéticos e documentos didáticos versionados no
 repositório.
 
-- `data/synthetic_transcripts/`: transcrições fictícias de reuniões com
-  stakeholders. Elas contêm casos plantados de ambiguidade, conflito e lacuna.
-- `data/existing_requirements/`: requisitos fictícios já existentes, usados como
-  base para comparação e detecção de conflitos.
-- `docs/corpus/iso29148_criteria.md`: critérios de qualidade para requisitos,
-  como completude, consistência, verificabilidade e rastreabilidade.
-- `docs/corpus/weak_words_ptbr.json`: termos vagos em português usados para
-  apoiar análise de ambiguidade.
+- `data/synthetic_transcripts/`: transcrições fictícias com casos plantados.
+- `data/existing_requirements/`: requisitos fictícios usados para conflitos.
+- `docs/corpus/iso29148_criteria.md`: critérios de qualidade de requisitos.
+- `docs/corpus/weak_words_ptbr.json`: termos vagos usados na ambiguidade.
 
 Nenhum desses arquivos contém dados pessoais, credenciais, informações
 sigilosas ou dados reais de stakeholders.
 
-## Estratégia de ingestão
+## Estratégia de Ingestão e Indexação
 
 A ingestão começa em `src/req_multiagent/ingestion/extractor_agent.py`.
 
-O módulo possui duas partes:
-
-- `create_extractor_agent()`: cria o agente Agno responsável por extrair
-  requisitos de transcrições em uma execução com modelo real.
+- `create_extractor_agent()`: cria o agente Agno de extração.
 - `extract_requirements_from_file()`: extrai requisitos dos arquivos sintéticos
-  versionados usando marcações como `[RF]` e `[RNF]`, preservando ID,
-  classificação e rastreabilidade.
+  com marcações `[RF]` e `[RNF]`, preservando ID, classificação e fonte.
+- `extract_requirements_from_text()`: extrai requisitos de texto colado ou
+  importado pela interface usando marcadores explícitos ou heurísticas para
+  conversas naturais.
 
-Esse desenho permite demonstrar o uso de Agno sem fazer os testes dependerem de
-chave de API ou chamada externa.
+A base de conhecimento local fica em `src/req_multiagent/ingestion/vector_store.py`.
+Ela lê documentos de `docs/corpus/` e `data/existing_requirements/`, divide o
+conteúdo em blocos por parágrafos e grava um índice local em JSON no caminho
+configurado por `KNOWLEDGE_BASE_PATH`.
 
-## Estratégia de indexação
+## Estratégia de Análise
 
-A base de conhecimento local fica sob responsabilidade de
-`src/req_multiagent/ingestion/vector_store.py`.
-
-A indexação lê documentos de `docs/corpus/` e `data/existing_requirements/`,
-divide o conteúdo em blocos por parágrafos e grava um índice local em JSON no
-caminho configurado por `KNOWLEDGE_BASE_PATH`.
-
-Por padrão:
-
-```text
-KNOWLEDGE_BASE_PATH=storage/knowledge_base
-```
-
-Esse módulo centraliza as operações de:
-
-- inicializar a base local;
-- indexar documentos;
-- consultar documentos por termos;
-- limpar a base;
-- reconstruir a base a partir dos arquivos versionados.
-
-## Reconstrução ou limpeza da base
-
-A base de conhecimento é derivada dos arquivos versionados. Portanto, ela pode
-ser apagada e reconstruída quando necessário.
-
-Exemplo de uso em Python:
-
-```python
-from pathlib import Path
-
-from req_multiagent.ingestion.vector_store import rebuild_knowledge_base
-
-rebuild_knowledge_base(
-    source_paths=[
-        Path("docs/corpus"),
-        Path("data/existing_requirements"),
-    ]
-)
-```
-
-Para limpar manualmente o estado gerado, remova o diretório configurado em
-`KNOWLEDGE_BASE_PATH`. O conteúdo fonte continua preservado em `docs/` e
-`data/`.
-
-## Estratégia de análise
-
-A análise de requisitos fica em `src/req_multiagent/analysis/`. Cada módulo
-possui um agente Agno e funções determinísticas testáveis, no mesmo padrão da
-ingestão.
+A análise fica em `src/req_multiagent/analysis/`. Cada módulo possui um agente
+Agno e funções determinísticas testáveis, além de variantes com LLM quando
+`USE_LLM_AGENTS=true`.
 
 ### Agente de Ambiguidade
 
 Arquivo: `src/req_multiagent/analysis/ambiguity_agent.py`
 
-- `create_ambiguity_agent()`: cria o agente Agno responsável por revisar termos
-  vagos em execuções com modelo real.
-- `detect_ambiguities()`: cruza a descrição do requisito com
-  `docs/corpus/weak_words_ptbr.json` e consulta `docs/corpus/iso29148_criteria.md`
-  via `vector_store.query_knowledge_base()` para anexar evidências RAG.
-- Saída: lista de `AmbiguityFinding` com termo detectado, pergunta de
-  clarificação e fontes usadas na justificativa.
+- `detect_ambiguities()`: cruza `weak_words_ptbr.json` com o requisito e consulta
+  `iso29148_criteria.md` via RAG local.
+- Saída: `AmbiguityFinding` com termo, pergunta de clarificação e evidências.
 
 ### Agente de Conflito
 
 Arquivo: `src/req_multiagent/analysis/conflict_agent.py`
 
-- `create_conflict_agent()`: cria o agente Agno responsável por comparar
-  requisitos em execuções com modelo real.
-- `load_existing_requirements()`: carrega a base versionada em
-  `data/existing_requirements/existing_requirements.md`.
-- `detect_conflicts()`: compara requisitos extraídos contra a base existente e
-  também contra o lote atual, retornando IDs conflitantes.
-- Saída: lista de `ConflictFinding` com explicação e evidências dos dois lados
-  da comparação.
+- `detect_conflicts()`: compara requisitos extraídos com a base existente e com
+  o lote atual.
+- `detect_conflicts_with_llm()`: variante com Groq para execuções com modelo real.
+- Saída: `ConflictFinding` com IDs conflitantes e justificativa.
 
 ### Agente de Priorização
 
 Arquivo: `src/req_multiagent/analysis/prioritization_agent.py`
 
-- `create_prioritization_agent()`: cria o agente Agno responsável por classificar
-  requisitos em execuções com modelo real.
-- `prioritize_requirements()`: aplica MoSCoW (`must`, `should`, `could`,
-  `wont`) considerando ambiguidades e conflitos já detectados.
-- Saída: lista de `PriorityAssessment` com prioridade e justificativa.
-
-Regras adotadas na priorização determinística:
-
-- requisitos com conflito viram `wont`;
-- requisitos ambíguos viram `could`;
-- fluxos funcionais críticos sem problemas viram `must`;
-- demais requisitos funcionais e não funcionais são classificados como `should`
-  ou `could`, conforme o contexto.
+- `prioritize_requirements()`: aplica MoSCoW considerando ambiguidades e conflitos.
+- `prioritize_requirements_with_llm()`: variante com Groq.
+- Regras determinísticas: conflito → `wont`, ambiguidade → `could`, fluxo crítico
+  → `must`, demais casos → `should` ou `could`.
 
 ### Agente de Lacunas
 
 Arquivo: `src/req_multiagent/analysis/gap_agent.py`
 
-- `create_gap_agent()`: cria o agente Agno responsável por identificar lacunas
-  em execuções com modelo real.
-- `detect_gaps()`: detecta trechos narrativos sem regra formal na transcrição e
-  requisitos incompletos em relação à base existente.
-- Saída: lista de `GapFinding` com tópico, explicação e perguntas de
-  clarificação.
+- `detect_gaps()`: identifica trechos narrativos sem regra formal e requisitos
+  incompletos em relação à base existente.
+- Saída: `GapFinding` com tópico, explicação e perguntas de clarificação.
 
-Casos cobertos:
-
-- `transcript_02_support.md`: dúvida narrativa sobre envio automático sem
-  revisão humana.
-- `transcript_03_approvals.md`: ausência do gestor substituto e registro de
-  decisão sem os campos exigidos por `REQ-EXIST-003`.
-
-## Validação da análise
-
-A validação da parte de análise é demonstrada por testes automatizados em
-`tests/`, usando os casos plantados nas transcrições sintéticas:
+## Validação da Análise
 
 | Transcrição | Caso plantado | Agente validado |
 | ----------- | ------------- | --------------- |
@@ -171,39 +219,119 @@ A validação da parte de análise é demonstrada por testes automatizados em
 | `transcript_03_approvals.md` | termo vago "eficiente" | ambiguidade |
 | `transcript_01_checkout.md` | cancelamento vs. base existente | conflito |
 | `transcript_02_support.md` | resposta automática vs. revisão humana | conflito |
-| `transcript_03_approvals.md` | lacuna de aprovação, sem conflito direto | conflito |
+| `transcript_03_approvals.md` | sem conflito direto | conflito |
 | `transcript_02_support.md` | dúvida narrativa sem regra formal | lacuna |
-| `transcript_03_approvals.md` | ausência do gestor e registro incompleto | lacuna |
+| `transcript_03_approvals.md` | gestor ausente e registro incompleto | lacuna |
 | `transcript_01_checkout.md` | must/could/wont após análise | priorização |
 
-Arquivos de teste:
-
-- `tests/test_ambiguity_agent.py`
-- `tests/test_conflict_agent.py`
-- `tests/test_prioritization_agent.py`
-- `tests/test_gap_agent.py`
-- `tests/test_analysis_pipeline.py`
-
-Para executar os testes da análise:
+Rodar testes da ingestão, base e análise:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-pytest tests/test_ambiguity_agent.py tests/test_conflict_agent.py tests/test_prioritization_agent.py tests/test_gap_agent.py tests/test_analysis_pipeline.py -v
+uv run pytest tests/test_extractor_agent.py tests/test_vector_store.py tests/test_ambiguity_agent.py tests/test_conflict_agent.py tests/test_prioritization_agent.py tests/test_gap_agent.py tests/test_analysis_pipeline.py -v
 ```
 
-Esses testes não exigem `GROQ_API_KEY`, porque exercitam a lógica
-determinística dos agentes. As funções `create_*_agent()` permanecem
-versionadas para demonstração com Agno em execuções com modelo real.
+Rodar teste de integração do workflow:
 
-## Limitações conhecidas da análise
+```bash
+uv run pytest tests/test_workflow.py -v
+```
 
-- A detecção de ambiguidade depende do dicionário `weak_words_ptbr.json` e de
-  consulta lexical simples ao corpus ISO 29148.
-- A detecção de conflito usa regras e heurísticas sobre termos-chave; não faz
-  comparação semântica profunda entre requisitos.
-- A priorização MoSCoW é baseada em sinais textuais e nos achados prévios de
-  ambiguidade e conflito; não substitui decisão humana de produto.
-- A detecção de lacunas usa sinais narrativos e regras de completude; não cobre
-  todas as formas possíveis de requisito incompleto.
+Os testes determinísticos não exigem `GROQ_API_KEY`.
+
+## Persistência
+
+Os resultados são salvos em SQLite por `src/req_multiagent/persistence/repository.py`.
+Por padrão, o banco fica em:
+
+```text
+storage/requirements.db
+```
+
+Esse estado pode ser apagado com segurança, pois os dados de entrada ficam
+versionados em `data/` e `docs/`.
+
+## Checklist Técnico
+
+### Tema e Escopo
+
+- [x] O projeto escolhe um dos assuntos gerais definidos no enunciado: Engenharia de Requisitos.
+- [x] O problema resolvido está descrito claramente neste README.
+- [x] O usuário-alvo está definido neste README.
+- [x] O fluxo principal de uso está descrito neste README.
+- [x] O escopo implementado é compatível com o problema proposto.
+
+### Agno e Agentic AI
+
+- [x] O sistema usa Python.
+- [x] O sistema usa o framework Agno nos módulos de agentes.
+- [x] O sistema implementa agentes de extração, ambiguidade, conflito, priorização e consolidação.
+- [x] O uso dos agentes é necessário para o fluxo principal.
+- [x] Prompts/instruções dos agentes estão versionados nos arquivos `*_agent.py`.
+- [x] O sistema usa workflow, base de conhecimento e persistência.
+
+### Memória, Persistência ou Base de Conhecimento
+
+- [x] O sistema mantém base de conhecimento local e SQLite.
+- [x] O estado é armazenado em `storage/`.
+- [x] O projeto permite reconstruir a base com `scripts/rebuild_knowledge_base.py`.
+- [x] O corpus está documentado em `docs/corpus/`.
+- [x] A estratégia de ingestão está documentada neste README.
+- [x] A estratégia de chunking/indexação está documentada neste README.
+- [x] A resposta indica fontes e evidências usadas.
+
+### Validação e Qualidade da Saída
+
+- [x] O sistema valida saída por regras, corpus, conflitos, lacunas e testes.
+- [x] A validação é demonstrável por testes automatizados.
+- [x] O sistema informa limitações e casos que exigem revisão humana.
+
+### Interface ou Execução
+
+- [x] O sistema oferece CLI e Streamlit.
+- [x] O fluxo principal pode ser executado seguindo este README.
+- [x] O projeto inclui dados e comandos de exemplo.
+
+### Reprodutibilidade
+
+- [x] O repositório contém README.md.
+- [x] O repositório contém pyproject.toml.
+- [x] O repositório contém .gitignore.
+- [x] O repositório contém .env.example.
+- [x] O README explica como instalar dependências.
+- [x] O README explica como configurar variáveis de ambiente.
+- [x] O README explica como executar o sistema.
+- [x] O README lista os integrantes.
+- [ ] O repositório possui release ou tag da versão entregue.
+
+### Engenharia de Software
+
+- [x] O código está organizado em módulos com responsabilidades claras.
+- [x] A lógica dos agentes está separada da interface.
+- [x] Configurações e credenciais não estão hardcoded.
+- [x] O código usa nomes descritivos.
+- [x] O código usa type hints nas assinaturas principais.
+- [x] Funções e classes duráveis têm docstrings.
+- [x] O projeto possui testes e exemplos executáveis.
+- [x] O projeto trata erros esperados no fluxo principal.
+
+### Segurança e Dados
+
+- [x] O repositório não contém chaves de API, senhas, tokens ou segredos.
+- [x] O repositório não contém dados pessoais sensíveis.
+- [x] O projeto usa `.env.example`.
+- [x] Dados externos/sintéticos estão descritos neste README.
+
+## Limitações Conhecidas
+
+- A extração de conversa natural usa heurísticas e pode exigir revisão humana.
+- A detecção de ambiguidade depende de `weak_words_ptbr.json` e consulta lexical
+  simples ao corpus ISO 29148.
+- A detecção de conflitos cobre padrões explícitos usados na demonstração.
+- A detecção de lacunas usa sinais narrativos e regras de completude.
+- A priorização MoSCoW usa regras simples e deve ser revisada por stakeholders.
+- A execução com modelo real depende de `GROQ_API_KEY`.
+- A release/tag deve ser criada manualmente antes da entrega final.
+
+## Entrega
+
+Consulte `docs/delivery_checklist.md` para a checklist de release/tag e vídeo.

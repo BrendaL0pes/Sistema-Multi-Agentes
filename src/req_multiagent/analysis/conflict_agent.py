@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from req_multiagent.config import load_settings
+from req_multiagent.llm_utils import parse_structured_response, run_groq_json
 from req_multiagent.models import ConflictFinding, Evidence, FindingSeverity, Requirement
 
 DEFAULT_EXISTING_REQUIREMENTS_PATH = Path(
@@ -88,13 +89,19 @@ def create_conflict_agent():
     return Agent(
         name="Conflict Analyst",
         role="Compare new requirements against existing baselines and batches.",
-        model=Groq(id=settings.model_id),
+        model=Groq(
+            id=settings.model_id,
+            api_key=settings.groq_api_key,
+            timeout=60,
+            max_retries=2,
+            retries=2,
+        ),
         instructions=[
             "Responda em portugues.",
             "Compare requisitos novos com requisitos existentes e com o lote atual.",
             "Identifique contradicoes objetivas entre comportamentos esperados.",
             "Retorne os IDs conflitantes com justificativa objetiva.",
-            "Nao invente conflitos quando os requisitos forem compativeis.",
+            "Quando nao houver evidencias suficientes, recomende revisao humana.",
         ],
         markdown=True,
     )
@@ -136,10 +143,15 @@ def load_existing_requirements(
 def detect_conflicts(
     requirements: list[Requirement],
     existing_requirements_path: Path | str | None = None,
+    compare_existing: bool = True,
 ) -> list[ConflictFinding]:
     """Detect conflicts between new requirements, the baseline and the batch."""
 
-    existing_requirements = load_existing_requirements(existing_requirements_path)
+    existing_requirements = (
+        load_existing_requirements(existing_requirements_path)
+        if compare_existing
+        else []
+    )
     existing_by_id = {item.id: item for item in existing_requirements}
     findings: list[ConflictFinding] = []
     seen_pairs: set[tuple[str, str]] = set()
@@ -155,6 +167,85 @@ def detect_conflicts(
 
     findings.extend(_detect_batch_conflicts(requirements=requirements, seen_pairs=seen_pairs))
     return findings
+
+
+def detect_conflicts_with_llm(
+    requirements: list[Requirement],
+    existing_requirements_path: Path | str | None = None,
+) -> list[ConflictFinding]:
+    """Detect conflicts using the configured Agno LLM agent."""
+
+    settings = load_settings()
+    if not settings.groq_api_key:
+        raise RuntimeError("GROQ_API_KEY nao configurada para usar a LLM.")
+
+    from pydantic import BaseModel, Field
+
+    class LlmConflictFinding(BaseModel):
+        requirement_id: str
+        conflicting_requirement_id: str
+        explanation: str
+        severity: str = Field(pattern="^(low|medium|high)$")
+        confidence: float | None = None
+
+    class LlmConflictFindings(BaseModel):
+        findings: list[LlmConflictFinding]
+
+    existing_requirements = load_existing_requirements(existing_requirements_path)
+    valid_ids = {
+        *[requirement.id for requirement in requirements],
+        *[requirement.id for requirement in existing_requirements],
+    }
+    prompt = (
+        "Compare os requisitos do projeto entre si e tambem com requisitos existentes. "
+        "Retorne somente conflitos reais, citando IDs existentes na entrada. "
+        "Conflito significa contradicao objetiva: um requisito permite algo que "
+        "outro proibe, exige comportamento incompativel, ou define regra que nao "
+        "pode coexistir com a outra. Nao marque como conflito quando o requisito "
+        "novo apenas detalha, reforca, complementa ou implementa um requisito "
+        "existente. Quando nao houver contradicao objetiva, nao retorne achado.\n\n"
+        f"Requisitos do projeto:\n{_requirements_prompt(requirements)}\n\n"
+        "Requisitos existentes opcionais:\n"
+        f"{_existing_requirements_prompt(existing_requirements)}"
+    )
+    payload = run_groq_json(
+        prompt,
+        LlmConflictFindings,
+        "Conflict Analyst",
+        system_instructions=[
+            "Responda em portugues.",
+            "Identifique contradicoes entre requisitos novos e existentes.",
+            "Informe IDs conflitantes e explique objetivamente a contradicao.",
+            "Quando nao houver evidencias suficientes, recomende revisao humana.",
+        ],
+        model_id=settings.model_id,
+        api_key=settings.groq_api_key,
+    )
+
+    findings = [
+        item for item in payload.findings if _is_valid_llm_conflict(item, valid_ids)
+    ]
+    return [
+        ConflictFinding(
+            requirement_id=item.requirement_id,
+            conflicting_requirement_id=item.conflicting_requirement_id,
+            explanation=item.explanation,
+            severity=FindingSeverity(item.severity),
+            evidence=[
+                Evidence(
+                    source="llm:conflict_agent",
+                    excerpt=(
+                        f"{item.requirement_id} x "
+                        f"{item.conflicting_requirement_id}"
+                    ),
+                    explanation="Conflito identificado pelo agente Agno/Groq.",
+                )
+            ],
+            confidence=item.confidence,
+            limitations=["Achado gerado por LLM e deve ser revisado por humano."],
+        )
+        for item in findings
+    ]
 
 
 def _detect_existing_conflicts(
@@ -305,3 +396,33 @@ def _normalize_text(text: str) -> str:
 
 def _tokenize(text: str) -> list[str]:
     return re.findall(r"[\wÀ-ÿ]+", _normalize_text(text))
+
+
+def _requirements_prompt(requirements: list[Requirement]) -> str:
+    return "\n".join(
+        f"- {item.id} ({item.type.value}): {item.description}"
+        for item in requirements
+    )
+
+
+def _existing_requirements_prompt(requirements: list[ExistingRequirement]) -> str:
+    if not requirements:
+        return "- Nenhuma base externa informada."
+    return "\n".join(
+        f"- {item.id}: {item.description}"
+        for item in requirements
+    )
+
+
+def _is_valid_llm_conflict(item, valid_ids: set[str]) -> bool:
+    if item.requirement_id not in valid_ids:
+        return False
+    if item.conflicting_requirement_id not in valid_ids:
+        return False
+    if item.requirement_id == item.conflicting_requirement_id:
+        return False
+    return True
+
+
+def _parse_llm_payload(response, schema_type):
+    return parse_structured_response(response, schema_type, "Conflict Analyst")
