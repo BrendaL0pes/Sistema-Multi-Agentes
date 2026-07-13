@@ -12,7 +12,13 @@ from req_multiagent.ingestion.vector_store import (
     index_documents,
     query_knowledge_base,
 )
-from req_multiagent.models import AmbiguityFinding, Evidence, FindingSeverity, Requirement
+from req_multiagent.llm_utils import parse_structured_response, run_groq_json
+from req_multiagent.models import (
+    AmbiguityFinding,
+    Evidence,
+    FindingSeverity,
+    Requirement,
+)
 
 DEFAULT_WEAK_WORDS_PATH = Path("docs/corpus/weak_words_ptbr.json")
 DEFAULT_ISO_CRITERIA_PATH = Path("docs/corpus/iso29148_criteria.md")
@@ -41,7 +47,13 @@ def create_ambiguity_agent():
     return Agent(
         name="Ambiguity Analyst",
         role="Detect vague terms in requirements and suggest clarifications.",
-        model=Groq(id=settings.model_id),
+        model=Groq(
+            id=settings.model_id,
+            api_key=settings.groq_api_key,
+            timeout=60,
+            max_retries=2,
+            retries=2,
+        ),
         instructions=[
             "Responda em portugues.",
             "Identifique termos vagos em requisitos de software.",
@@ -102,13 +114,81 @@ def detect_ambiguities(
     return findings
 
 
+def detect_ambiguities_with_llm(
+    requirements: list[Requirement],
+) -> list[AmbiguityFinding]:
+    """Detect ambiguities using the configured Agno LLM agent."""
+
+    settings = load_settings()
+    if not settings.groq_api_key:
+        raise RuntimeError("GROQ_API_KEY nao configurada para usar a LLM.")
+
+    from pydantic import BaseModel, Field
+
+    class LlmAmbiguityFinding(BaseModel):
+        requirement_id: str
+        term: str
+        explanation: str
+        clarification_question: str
+        severity: str = Field(pattern="^(low|medium|high)$")
+        confidence: float | None = None
+
+    class LlmAmbiguityFindings(BaseModel):
+        findings: list[LlmAmbiguityFinding]
+
+    weak_words = load_weak_words()
+    prompt = (
+        "Analise os requisitos abaixo e identifique ambiguidades reais. "
+        "Use os criterios ISO 29148 e os termos fracos como apoio, mas nao "
+        "invente problema quando o requisito ja for claro.\n\n"
+        f"Termos fracos conhecidos: {', '.join(item.term for item in weak_words)}\n\n"
+        f"Requisitos:\n{_requirements_prompt(requirements)}"
+    )
+    payload = run_groq_json(
+        prompt,
+        LlmAmbiguityFindings,
+        "Ambiguity Analyst",
+        system_instructions=[
+            "Responda em portugues.",
+            "Identifique termos vagos em requisitos de software.",
+            "Cruze os achados com criterios de qualidade e termos fracos do corpus.",
+            "Gere perguntas objetivas de clarificacao para cada ambiguidade.",
+            "Nao invente ambiguidades quando o requisito ja for verificavel.",
+        ],
+        model_id=settings.model_id,
+        api_key=settings.groq_api_key,
+    )
+
+    return [
+        AmbiguityFinding(
+            requirement_id=item.requirement_id,
+            term=item.term,
+            explanation=item.explanation,
+            clarification_questions=[item.clarification_question],
+            severity=FindingSeverity(item.severity),
+            evidence=[
+                Evidence(
+                    source="llm:ambiguity_agent",
+                    excerpt=item.term,
+                    explanation="Ambiguidade identificada pelo agente Agno/Groq.",
+                )
+            ],
+            confidence=item.confidence,
+            limitations=["Achado gerado por LLM e deve ser revisado por humano."],
+        )
+        for item in payload.findings
+    ]
+
+
 def _ensure_iso_corpus_indexed(
     index_path: Path | str | None = None,
     corpus_path: Path | str | None = None,
 ) -> None:
     """Index the ISO criteria corpus when the local knowledge base is empty."""
 
-    target_path = Path(index_path) if index_path else load_settings().knowledge_base_path
+    target_path = (
+        Path(index_path) if index_path else load_settings().knowledge_base_path
+    )
     index_file = target_path / "documents.json"
     if index_file.exists():
         return
@@ -186,3 +266,14 @@ def _term_matches(text: str, term: str) -> bool:
     text_tokens = re.findall(r"[\wÀ-ÿ]+", normalized_text)
     term_stem = normalized_term[: max(len(normalized_term) - 1, 4)]
     return any(token.startswith(term_stem) for token in text_tokens)
+
+
+def _requirements_prompt(requirements: list[Requirement]) -> str:
+    return "\n".join(
+        f"- {item.id} ({item.type.value}): {item.description}"
+        for item in requirements
+    )
+
+
+def _parse_llm_payload(response, schema_type):
+    return parse_structured_response(response, schema_type, "Ambiguity Analyst")

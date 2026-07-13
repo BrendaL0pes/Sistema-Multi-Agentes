@@ -1,6 +1,5 @@
 from pathlib import Path
-
-import pytest
+import shutil
 
 from req_multiagent.analysis.ambiguity_agent import (
     DEFAULT_ISO_CRITERIA_PATH,
@@ -11,31 +10,34 @@ from req_multiagent.ingestion.extractor_agent import extract_requirements_from_f
 from req_multiagent.models import RequirementType
 
 
-@pytest.fixture
-def knowledge_base_path(tmp_path: Path) -> Path:
-    """Provide an isolated knowledge-base directory for each test."""
+TEST_KNOWLEDGE_BASE_PATH = Path("storage/test_ambiguity_agent")
 
-    return tmp_path / "knowledge_base"
+
+def setup_function() -> None:
+    if TEST_KNOWLEDGE_BASE_PATH.exists():
+        shutil.rmtree(TEST_KNOWLEDGE_BASE_PATH)
+
+
+def teardown_function() -> None:
+    if TEST_KNOWLEDGE_BASE_PATH.exists():
+        shutil.rmtree(TEST_KNOWLEDGE_BASE_PATH)
 
 
 def _detect_from_transcript(
     transcript_path: Path,
-    knowledge_base_path: Path,
 ) -> list:
     requirements = extract_requirements_from_file(transcript_path)
     return detect_ambiguities(
         requirements=requirements,
-        index_path=knowledge_base_path,
+        index_path=TEST_KNOWLEDGE_BASE_PATH,
         corpus_path=DEFAULT_ISO_CRITERIA_PATH,
     )
 
 
-def test_detects_rapida_ambiguity_in_checkout_transcript(
-    knowledge_base_path: Path,
-) -> None:
+def test_detects_rapida_ambiguity_in_checkout_transcript() -> None:
     transcript_path = Path("data/synthetic_transcripts/transcript_01_checkout.md")
 
-    findings = _detect_from_transcript(transcript_path, knowledge_base_path)
+    findings = _detect_from_transcript(transcript_path)
 
     assert len(findings) == 1
     assert findings[0].term == "rápido"
@@ -51,12 +53,10 @@ def test_detects_rapida_ambiguity_in_checkout_transcript(
     )
 
 
-def test_detects_simples_ambiguity_in_support_transcript(
-    knowledge_base_path: Path,
-) -> None:
+def test_detects_simples_ambiguity_in_support_transcript() -> None:
     transcript_path = Path("data/synthetic_transcripts/transcript_02_support.md")
 
-    findings = _detect_from_transcript(transcript_path, knowledge_base_path)
+    findings = _detect_from_transcript(transcript_path)
 
     assert len(findings) == 1
     assert findings[0].term == "simples"
@@ -64,12 +64,10 @@ def test_detects_simples_ambiguity_in_support_transcript(
     assert "simplificado" in findings[0].clarification_questions[0].lower()
 
 
-def test_detects_eficiente_ambiguity_in_approvals_transcript(
-    knowledge_base_path: Path,
-) -> None:
+def test_detects_eficiente_ambiguity_in_approvals_transcript() -> None:
     transcript_path = Path("data/synthetic_transcripts/transcript_03_approvals.md")
 
-    findings = _detect_from_transcript(transcript_path, knowledge_base_path)
+    findings = _detect_from_transcript(transcript_path)
 
     assert len(findings) == 1
     assert findings[0].term == "eficiente"
@@ -77,9 +75,7 @@ def test_detects_eficiente_ambiguity_in_approvals_transcript(
     assert "métrica" in findings[0].clarification_questions[0].lower()
 
 
-def test_skips_functional_requirements_without_weak_words(
-    knowledge_base_path: Path,
-) -> None:
+def test_skips_functional_requirements_without_weak_words() -> None:
     transcript_path = Path("data/synthetic_transcripts/transcript_01_checkout.md")
     requirements = extract_requirements_from_file(transcript_path)
     functional_requirements = [
@@ -90,7 +86,7 @@ def test_skips_functional_requirements_without_weak_words(
 
     findings = detect_ambiguities(
         requirements=functional_requirements,
-        index_path=knowledge_base_path,
+        index_path=TEST_KNOWLEDGE_BASE_PATH,
         corpus_path=DEFAULT_ISO_CRITERIA_PATH,
     )
 
