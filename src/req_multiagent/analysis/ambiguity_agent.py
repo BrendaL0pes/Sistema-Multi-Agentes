@@ -8,9 +8,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from req_multiagent.config import load_settings
+from req_multiagent.ingestion.vector_store import (
+    index_documents,
+    query_knowledge_base,
+)
 from req_multiagent.models import AmbiguityFinding, Evidence, FindingSeverity, Requirement
 
 DEFAULT_WEAK_WORDS_PATH = Path("docs/corpus/weak_words_ptbr.json")
+DEFAULT_ISO_CRITERIA_PATH = Path("docs/corpus/iso29148_criteria.md")
 
 
 @dataclass(frozen=True)
@@ -66,10 +71,13 @@ def load_weak_words(path: Path | str | None = None) -> list[WeakWord]:
 def detect_ambiguities(
     requirements: list[Requirement],
     weak_words_path: Path | str | None = None,
+    index_path: Path | str | None = None,
+    corpus_path: Path | str | None = None,
 ) -> list[AmbiguityFinding]:
-    """Detect ambiguous terms in requirements using the weak-word dictionary."""
+    """Detect ambiguous terms using weak words and ISO 29148 quality criteria."""
 
     weak_words = load_weak_words(weak_words_path)
+    _ensure_iso_corpus_indexed(index_path=index_path, corpus_path=corpus_path)
     findings: list[AmbiguityFinding] = []
 
     for requirement in requirements:
@@ -84,17 +92,86 @@ def detect_ambiguities(
                     explanation=weak_word.reason,
                     clarification_questions=[weak_word.clarification_question],
                     severity=FindingSeverity.MEDIUM,
-                    evidence=[
-                        Evidence(
-                            source=DEFAULT_WEAK_WORDS_PATH.as_posix(),
-                            excerpt=weak_word.term,
-                            explanation=weak_word.reason,
-                        )
-                    ],
+                    evidence=_build_evidence(
+                        weak_word=weak_word,
+                        index_path=index_path,
+                    ),
                 )
             )
 
     return findings
+
+
+def _ensure_iso_corpus_indexed(
+    index_path: Path | str | None = None,
+    corpus_path: Path | str | None = None,
+) -> None:
+    """Index the ISO criteria corpus when the local knowledge base is empty."""
+
+    target_path = Path(index_path) if index_path else load_settings().knowledge_base_path
+    index_file = target_path / "documents.json"
+    if index_file.exists():
+        return
+
+    source_path = Path(corpus_path) if corpus_path else DEFAULT_ISO_CRITERIA_PATH
+    index_documents(source_paths=[source_path], index_path=target_path)
+
+
+def _build_evidence(
+    weak_word: WeakWord,
+    index_path: Path | str | None = None,
+) -> list[Evidence]:
+    """Combine weak-word and RAG evidence for an ambiguity finding."""
+
+    evidence = [
+        Evidence(
+            source=DEFAULT_WEAK_WORDS_PATH.as_posix(),
+            excerpt=weak_word.term,
+            explanation=weak_word.reason,
+        )
+    ]
+    evidence.extend(_fetch_iso_criteria_evidence(weak_word.term, index_path=index_path))
+    return evidence
+
+
+def _fetch_iso_criteria_evidence(
+    term: str,
+    index_path: Path | str | None = None,
+    limit: int = 2,
+) -> list[Evidence]:
+    """Retrieve ISO 29148 criteria chunks that justify the ambiguity finding."""
+
+    query = f"nao ambiguo {term} verificavel"
+    results = query_knowledge_base(query=query, index_path=index_path, limit=limit)
+    evidence: list[Evidence] = []
+
+    for result in results:
+        if DEFAULT_ISO_CRITERIA_PATH.as_posix() not in result.document.source_path:
+            continue
+
+        excerpt = _first_meaningful_line(result.document.content)
+        evidence.append(
+            Evidence(
+                source=result.document.source_path,
+                excerpt=excerpt,
+                explanation=(
+                    "Criterio de qualidade recuperado da base local para justificar "
+                    "a ambiguidade detectada."
+                ),
+            )
+        )
+
+    return evidence
+
+
+def _first_meaningful_line(content: str) -> str:
+    """Return the first non-empty line from a knowledge-base chunk."""
+
+    for line in content.splitlines():
+        cleaned = line.strip()
+        if cleaned:
+            return cleaned
+    return content.strip()
 
 
 def _term_matches(text: str, term: str) -> bool:
