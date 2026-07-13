@@ -2,8 +2,8 @@
 
 Sistema multiagente para apoiar Engenharia de Requisitos. O projeto recebe
 transcrições sintéticas de reuniões com stakeholders, extrai requisitos
-candidatos, prepara uma base de conhecimento local e deixa os dados prontos
-para análise de ambiguidade, conflito e priorização.
+candidatos, analisa ambiguidade, conflito e priorização, e prepara uma base
+de conhecimento local para justificar os achados.
 
 ## Integrantes
 
@@ -91,4 +91,94 @@ rebuild_knowledge_base(
 Para limpar manualmente o estado gerado, remova o diretório configurado em
 `KNOWLEDGE_BASE_PATH`. O conteúdo fonte continua preservado em `docs/` e
 `data/`.
+
+## Estratégia de análise
+
+A análise de requisitos fica em `src/req_multiagent/analysis/`. Cada módulo
+possui um agente Agno e funções determinísticas testáveis, no mesmo padrão da
+ingestão.
+
+### Agente de Ambiguidade
+
+Arquivo: `src/req_multiagent/analysis/ambiguity_agent.py`
+
+- `create_ambiguity_agent()`: cria o agente Agno responsável por revisar termos
+  vagos em execuções com modelo real.
+- `detect_ambiguities()`: cruza a descrição do requisito com
+  `docs/corpus/weak_words_ptbr.json` e consulta `docs/corpus/iso29148_criteria.md`
+  via `vector_store.query_knowledge_base()` para anexar evidências RAG.
+- Saída: lista de `AmbiguityFinding` com termo detectado, pergunta de
+  clarificação e fontes usadas na justificativa.
+
+### Agente de Conflito
+
+Arquivo: `src/req_multiagent/analysis/conflict_agent.py`
+
+- `create_conflict_agent()`: cria o agente Agno responsável por comparar
+  requisitos em execuções com modelo real.
+- `load_existing_requirements()`: carrega a base versionada em
+  `data/existing_requirements/existing_requirements.md`.
+- `detect_conflicts()`: compara requisitos extraídos contra a base existente e
+  também contra o lote atual, retornando IDs conflitantes.
+- Saída: lista de `ConflictFinding` com explicação e evidências dos dois lados
+  da comparação.
+
+### Agente de Priorização
+
+Arquivo: `src/req_multiagent/analysis/prioritization_agent.py`
+
+- `create_prioritization_agent()`: cria o agente Agno responsável por classificar
+  requisitos em execuções com modelo real.
+- `prioritize_requirements()`: aplica MoSCoW (`must`, `should`, `could`,
+  `wont`) considerando ambiguidades e conflitos já detectados.
+- Saída: lista de `PriorityAssessment` com prioridade e justificativa.
+
+Regras adotadas na priorização determinística:
+
+- requisitos com conflito viram `wont`;
+- requisitos ambíguos viram `could`;
+- fluxos funcionais críticos sem problemas viram `must`;
+- demais requisitos funcionais e não funcionais são classificados como `should`
+  ou `could`, conforme o contexto.
+
+## Validação da análise
+
+A validação da parte de análise é demonstrada por testes automatizados em
+`tests/`, usando os casos plantados nas transcrições sintéticas:
+
+| Transcrição | Caso plantado | Agente validado |
+| ----------- | ------------- | --------------- |
+| `transcript_01_checkout.md` | termo vago "rápida" | ambiguidade |
+| `transcript_02_support.md` | termo vago "simples" | ambiguidade |
+| `transcript_03_approvals.md` | termo vago "eficiente" | ambiguidade |
+| `transcript_01_checkout.md` | cancelamento vs. base existente | conflito |
+| `transcript_02_support.md` | resposta automática vs. revisão humana | conflito |
+| `transcript_03_approvals.md` | lacuna de aprovação, sem conflito direto | conflito |
+
+Arquivos de teste:
+
+- `tests/test_ambiguity_agent.py`
+- `tests/test_conflict_agent.py`
+
+Para executar apenas os testes da análise:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest tests/test_ambiguity_agent.py tests/test_conflict_agent.py -v
+```
+
+Esses testes não exigem `GROQ_API_KEY`, porque exercitam a lógica
+determinística dos agentes. As funções `create_*_agent()` permanecem
+versionadas para demonstração com Agno em execuções com modelo real.
+
+## Limitações conhecidas da análise
+
+- A detecção de ambiguidade depende do dicionário `weak_words_ptbr.json` e de
+  consulta lexical simples ao corpus ISO 29148.
+- A detecção de conflito usa regras e heurísticas sobre termos-chave; não faz
+  comparação semântica profunda entre requisitos.
+- A priorização MoSCoW é baseada em sinais textuais e nos achados prévios de
+  ambiguidade e conflito; não substitui decisão humana de produto.
 
