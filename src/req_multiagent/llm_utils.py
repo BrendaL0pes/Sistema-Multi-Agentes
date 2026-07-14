@@ -16,66 +16,6 @@ class LlmResponseError(RuntimeError):
     """Raised when the model provider does not return the expected structure."""
 
 
-def run_groq_json(
-    prompt: str,
-    schema_type: type[SchemaT],
-    agent_name: str,
-    system_instructions: list[str],
-    model_id: str,
-    api_key: str,
-    attempts: int = 1,
-) -> SchemaT:
-    """Call Groq directly in JSON mode and validate the response schema."""
-
-    from groq import Groq
-
-    schema = json.dumps(schema_type.model_json_schema(), ensure_ascii=True)
-    user_prompt = (
-        f"{prompt}\n\n"
-        "Retorne exclusivamente um JSON valido, sem markdown, sem comentario "
-        "e sem texto antes ou depois. O JSON deve seguir este schema:\n"
-        f"{schema}"
-    )
-    client = Groq(api_key=api_key, timeout=30, max_retries=0)
-    last_error: Exception | None = None
-    messages = [
-        {"role": "system", "content": "\n".join(system_instructions)},
-        {"role": "user", "content": user_prompt},
-    ]
-
-    for attempt in range(1, attempts + 1):
-        try:
-            response = client.chat.completions.create(
-                model=model_id,
-                messages=messages,
-                response_format={"type": "json_object"},
-                temperature=0,
-            )
-            content = response.choices[0].message.content or ""
-            return parse_structured_text(content, schema_type, agent_name)
-        except Exception as exc:
-            last_error = exc
-
-        try:
-            response = client.chat.completions.create(
-                model=model_id,
-                messages=messages,
-                temperature=0,
-            )
-            content = response.choices[0].message.content or ""
-            return parse_structured_text(content, schema_type, agent_name)
-        except Exception as exc:
-            last_error = exc
-            if attempt == attempts:
-                raise LlmResponseError(
-                    f"{agent_name}: falha ao chamar a Groq. "
-                    f"Detalhe: {_provider_error(last_error)}"
-                ) from exc
-            sleep(attempt)
-
-    raise LlmResponseError(str(last_error))
-
-
 def run_structured_agent(
     agent: Any,
     prompt: str,
@@ -175,26 +115,6 @@ def _preview(text: str, limit: int = 240) -> str:
     if len(normalized) <= limit:
         return normalized
     return f"{normalized[:limit]}..."
-
-
-def _provider_error(error: Exception | None) -> str:
-    if error is None:
-        return "erro desconhecido"
-    parts = [_exception_message(error)]
-    cause = getattr(error, "__cause__", None)
-    context = getattr(error, "__context__", None)
-    if cause is not None:
-        parts.append(f"cause={_exception_message(cause)}")
-    if context is not None and context is not cause:
-        parts.append(f"context={_exception_message(context)}")
-    return _preview(" | ".join(parts), limit=520)
-
-
-def _exception_message(error: BaseException) -> str:
-    message = " ".join(str(error).split())
-    if not message:
-        message = repr(error)
-    return f"{error.__class__.__name__}: {message}"
 
 
 def _json_fallback_prompt(prompt: str, schema_type: type[SchemaT]) -> str:

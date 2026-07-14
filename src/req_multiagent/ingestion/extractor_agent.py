@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from req_multiagent.config import load_settings
-from req_multiagent.llm_utils import run_groq_json
+from req_multiagent.llm_utils import run_structured_agent
 from req_multiagent.models import Requirement, RequirementType, SourceTrace
 
 REQUIREMENT_PATTERN = re.compile(
@@ -137,19 +137,11 @@ def extract_requirements_with_llm(
         "ou restricoes mensuraveis.\n\n"
         f"Conversa:\n{transcript}"
     )
-    payload = run_groq_json(
+    payload = run_structured_agent(
+        create_extractor_agent(),
         prompt,
         ExtractedRequirements,
         "Requirements Extractor",
-        system_instructions=[
-            "Responda em portugues.",
-            "Extraia requisitos funcionais e nao funcionais de transcricoes.",
-            "Preserve rastreabilidade citando o trecho de origem.",
-            "Classifique cada requisito como functional ou non_functional.",
-            "Retorne uma lista estruturada, objetiva e sem inventar requisitos.",
-        ],
-        model_id=settings.model_id,
-        api_key=settings.groq_api_key,
     )
 
     requirements: list[Requirement] = []
@@ -171,7 +163,7 @@ def extract_requirements_with_llm(
                     start_line=line_number,
                     end_line=line_number,
                 ),
-                metadata={"extraction_mode": "llm_groq"},
+                metadata={"extraction_mode": "llm_agno"},
             )
         )
 

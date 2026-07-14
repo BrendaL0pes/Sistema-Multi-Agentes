@@ -10,6 +10,10 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+FALLBACK_NOTICE = (
+    "GROQ_API_KEY nao configurada. O pipeline foi executado em modo deterministico."
+)
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -39,6 +43,21 @@ def load_settings() -> Settings:
         knowledge_base_path=Path(
             os.getenv("KNOWLEDGE_BASE_PATH", "storage/knowledge_base")
         ),
-        use_llm_agents=os.getenv("USE_LLM_AGENTS", "true").lower()
+        use_llm_agents=os.getenv("USE_LLM_AGENTS", "false").lower()
         in {"1", "true", "yes", "on"},
     )
+
+
+def resolve_use_llm(
+    use_llm: bool | None = None,
+    settings: Settings | None = None,
+) -> tuple[bool, str | None]:
+    """Return effective LLM usage and an optional deterministic fallback notice."""
+
+    current = settings or load_settings()
+    requested = current.use_llm_agents if use_llm is None else use_llm
+    if not requested:
+        return False, None
+    if not current.groq_api_key:
+        return False, FALLBACK_NOTICE
+    return True, None

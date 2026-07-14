@@ -17,6 +17,7 @@ from req_multiagent.models import (
     ConsolidatedReport,
     Evidence,
     FindingSeverity,
+    GapFinding,
     MoscowPriority,
     PriorityAssessment,
     Requirement,
@@ -240,6 +241,10 @@ def _report_from_payload(payload: dict[str, Any]) -> ConsolidatedReport:
             _conflict_from_payload(item)
             for item in payload.get("conflicts", [])
         ],
+        gaps=[
+            _gap_from_payload(item)
+            for item in payload.get("gaps", [])
+        ],
         priorities=[
             _priority_from_payload(item)
             for item in payload.get("priorities", [])
@@ -289,6 +294,19 @@ def _conflict_from_payload(payload: dict[str, Any]) -> ConflictFinding:
         conflicting_requirement_id=payload["conflicting_requirement_id"],
         explanation=payload["explanation"],
         severity=FindingSeverity(payload.get("severity", FindingSeverity.HIGH.value)),
+        evidence=[_evidence_from_payload(item) for item in payload.get("evidence", [])],
+        confidence=payload.get("confidence"),
+        limitations=payload.get("limitations", []),
+    )
+
+
+def _gap_from_payload(payload: dict[str, Any]) -> GapFinding:
+    return GapFinding(
+        requirement_id=payload.get("requirement_id"),
+        topic=payload["topic"],
+        explanation=payload["explanation"],
+        clarification_questions=payload.get("clarification_questions", []),
+        severity=FindingSeverity(payload.get("severity", FindingSeverity.MEDIUM.value)),
         evidence=[_evidence_from_payload(item) for item in payload.get("evidence", [])],
         confidence=payload.get("confidence"),
         limitations=payload.get("limitations", []),

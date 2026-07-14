@@ -14,11 +14,12 @@ from req_multiagent.analysis.conflict_agent import (
     detect_conflicts,
     detect_conflicts_with_llm,
 )
+from req_multiagent.analysis.gap_agent import detect_gaps
 from req_multiagent.analysis.prioritization_agent import (
     prioritize_requirements,
     prioritize_requirements_with_llm,
 )
-from req_multiagent.config import load_settings
+from req_multiagent.config import load_settings, resolve_use_llm
 from req_multiagent.ingestion.extractor_agent import (
     extract_requirements_from_text,
     extract_requirements_with_llm,
@@ -82,6 +83,8 @@ def run_requirements_workflow(
             database_path=database_path,
             persist=persist,
             use_llm=use_llm,
+            transcript_text=transcript_text,
+            transcript_path=path,
         )
     except OSError as exc:
         return WorkflowRunResult(
@@ -125,6 +128,8 @@ def run_requirements_workflow_from_text(
             database_path=database_path,
             persist=persist,
             use_llm=use_llm,
+            transcript_text=transcript_text,
+            transcript_path=source_name,
         )
     except Exception as exc:  # pragma: no cover - defensive workflow boundary
         return WorkflowRunResult(
@@ -283,7 +288,7 @@ def _extract_requirements(
     use_llm: bool | None,
 ):
     settings = load_settings()
-    should_use_llm = settings.use_llm_agents if use_llm is None else use_llm
+    should_use_llm, _ = resolve_use_llm(use_llm, settings)
     if should_use_llm:
         return extract_requirements_with_llm(
             transcript=transcript_text,
@@ -303,9 +308,11 @@ def _run_analysis_pipeline(
     database_path: Path | str | None,
     persist: bool,
     use_llm: bool | None,
+    transcript_text: str | None = None,
+    transcript_path: Path | str | None = None,
 ) -> WorkflowRunResult:
     settings = load_settings()
-    should_use_llm = settings.use_llm_agents if use_llm is None else use_llm
+    should_use_llm, fallback_message = resolve_use_llm(use_llm, settings)
 
     if should_use_llm:
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -319,6 +326,11 @@ def _run_analysis_pipeline(
             )
             ambiguities = ambiguities_future.result()
             conflicts = conflicts_future.result()
+        gaps = detect_gaps(
+            requirements=requirements,
+            transcript_text=transcript_text,
+            transcript_path=transcript_path,
+        )
         priorities = prioritize_requirements_with_llm(
             requirements,
             conflicts=conflicts,
@@ -328,17 +340,28 @@ def _run_analysis_pipeline(
             requirements=requirements,
             ambiguities=ambiguities,
             conflicts=conflicts,
+            gaps=gaps,
             priorities=priorities,
         )
     else:
         ambiguities = detect_ambiguities(requirements)
-        conflicts = detect_conflicts(requirements, compare_existing=False)
-        priorities = prioritize_requirements(requirements, conflicts=conflicts)
+        conflicts = detect_conflicts(requirements)
+        gaps = detect_gaps(
+            requirements=requirements,
+            transcript_text=transcript_text,
+            transcript_path=transcript_path,
+        )
+        priorities = prioritize_requirements(
+            requirements,
+            ambiguities=ambiguities,
+            conflicts=conflicts,
+        )
         report = consolidate_report(
             transcript_name=transcript_name,
             requirements=requirements,
             ambiguities=ambiguities,
             conflicts=conflicts,
+            gaps=gaps,
             priorities=priorities,
         )
     report_markdown = render_report_markdown(report)
@@ -351,6 +374,7 @@ def _run_analysis_pipeline(
         success=True,
         report=report,
         report_markdown=report_markdown,
+        message=fallback_message or "",
     )
 
 

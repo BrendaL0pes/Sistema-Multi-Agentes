@@ -62,6 +62,9 @@ def main() -> None:
         st.error(result.error or "Nao foi possivel executar a analise.")
         return
 
+    if result.message:
+        st.info(result.message)
+
     _render_result(result, repository, persist)
 
 
@@ -77,8 +80,20 @@ def _render_sidebar(repository) -> tuple[bool, bool]:
         )
         st.rerun()
 
+    settings = config_module.load_settings()
+    llm_available = settings.groq_api_key is not None
+
     persist = st.sidebar.toggle("💾 Salvar no histórico", value=True)
-    use_llm = st.sidebar.toggle("🤖 Usar LLM Groq", value=config_module.load_settings().use_llm_agents)
+    use_llm = st.sidebar.toggle(
+        "🤖 Usar LLM Groq",
+        value=settings.use_llm_agents and llm_available,
+        disabled=not llm_available,
+    )
+    if not llm_available:
+        st.sidebar.caption(
+            "Configure GROQ_API_KEY no .env para habilitar a LLM. "
+            "Sem a chave, o modo deterministico sera usado."
+        )
 
     st.sidebar.divider()
     _render_history(repository)
@@ -138,7 +153,7 @@ def _render_header() -> None:
     """, unsafe_allow_html=True)
     st.caption(
         "Cole ou importe uma conversa de stakeholders para extrair requisitos, "
-        "ambiguidades, conflitos e prioridades MoSCoW."
+        "ambiguidades, conflitos, lacunas e prioridades MoSCoW."
     )
 
     steps = st.columns(4)
@@ -231,7 +246,9 @@ def _render_upload_input(
 
 
 def _run_analysis(input_payload: dict[str, Any], persist: bool, use_llm: bool):
-    if use_llm:
+    settings = config_module.load_settings()
+    should_use_llm, _ = config_module.resolve_use_llm(use_llm, settings)
+    if should_use_llm:
         _assert_groq_connection()
     return requirements_workflow.run_requirements_workflow_from_text(
         transcript_text=input_payload["text"],
@@ -283,6 +300,7 @@ def _render_result(result, repository, persist: bool) -> None:
     req_count = len(report.requirements)
     amb_count = len(report.ambiguities)
     con_count = len(report.conflicts)
+    gap_count = len(report.gaps)
     prio_count = len(report.priorities)
     
     must_c = sum(1 for p in report.priorities if p.priority.value == "must")
@@ -323,6 +341,12 @@ def _render_result(result, repository, persist: bool) -> None:
         </div>
         <div class="metric-card">
             <div class="metric-header">
+                <div class="icon-wrapper purple-icon">🕳️</div>
+                <div><div class="metric-value">{gap_count}</div><div class="metric-label">Lacunas</div></div>
+            </div>
+        </div>
+        <div class="metric-card">
+            <div class="metric-header">
                 <div class="icon-wrapper green-icon">🎯</div>
                 <div><div class="metric-value">{prio_count}</div><div class="metric-label">Prioridades</div></div>
             </div>
@@ -348,6 +372,7 @@ def _render_result(result, repository, persist: bool) -> None:
             "Requisitos",
             "Ambiguidades",
             "Conflitos",
+            "Lacunas",
             "Priorização",
             "Adicionar conversa",
             "Ajustes",
@@ -361,12 +386,14 @@ def _render_result(result, repository, persist: bool) -> None:
     with tabs[2]:
         _render_conflicts(report)
     with tabs[3]:
-        _render_priorities(report)
+        _render_gaps(report)
     with tabs[4]:
-        _render_increment_project(report, persist)
+        _render_priorities(report)
     with tabs[5]:
-        _render_adjustment_chat(report, repository, persist)
+        _render_increment_project(report, persist)
     with tabs[6]:
+        _render_adjustment_chat(report, repository, persist)
+    with tabs[7]:
         st.download_button(
             label="⬇️ Baixar Relatório (.md)",
             data=result.report_markdown,
@@ -425,6 +452,24 @@ def _render_conflicts(report) -> None:
                 f"**{conflicting_label}**"
             )
             st.write(finding.explanation)
+
+
+def _render_gaps(report) -> None:
+    if not report.gaps:
+        st.success("Nenhuma lacuna detectada.")
+        return
+
+    for finding in report.gaps:
+        with st.container(border=True):
+            if finding.requirement_id:
+                st.markdown(f"**{finding.requirement_id}** — {finding.topic}")
+            else:
+                st.markdown(f"**Narrativa** — {finding.topic}")
+            st.write(finding.explanation)
+            if finding.clarification_questions:
+                st.caption(f"Pergunta: {finding.clarification_questions[0]}")
+            if finding.evidence:
+                st.caption(f"Fonte: {finding.evidence[0].excerpt}")
 
 
 def _render_priorities(report) -> None:
@@ -769,6 +814,7 @@ def _inject_base_style() -> None:
         .blue-icon { background:#EFF6FF; color:#3B82F6; }
         .yellow-icon { background:#FEF3C7; color:#D97706; }
         .red-icon { background:#FEE2E2; color:#DC2626; }
+        .purple-icon { background:#EDE9FE; color:#7C3AED; }
         .green-icon { background:#D1FAE5; color:#059669; }
         .metric-value { font-size:24px; font-weight:700; color:#111827; line-height:1; }
         .metric-label { font-size:13px; color:#6B7280; text-transform:uppercase; font-weight:600; margin-top:4px; }

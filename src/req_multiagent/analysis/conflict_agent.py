@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from req_multiagent.config import load_settings
-from req_multiagent.llm_utils import parse_structured_response, run_groq_json
+from req_multiagent.llm_utils import run_structured_agent
 from req_multiagent.models import ConflictFinding, Evidence, FindingSeverity, Requirement
 
 DEFAULT_EXISTING_REQUIREMENTS_PATH = Path(
@@ -208,18 +208,11 @@ def detect_conflicts_with_llm(
         "Requisitos existentes opcionais:\n"
         f"{_existing_requirements_prompt(existing_requirements)}"
     )
-    payload = run_groq_json(
+    payload = run_structured_agent(
+        create_conflict_agent(),
         prompt,
         LlmConflictFindings,
         "Conflict Analyst",
-        system_instructions=[
-            "Responda em portugues.",
-            "Identifique contradicoes entre requisitos novos e existentes.",
-            "Informe IDs conflitantes e explique objetivamente a contradicao.",
-            "Quando nao houver evidencias suficientes, recomende revisao humana.",
-        ],
-        model_id=settings.model_id,
-        api_key=settings.groq_api_key,
     )
 
     findings = [
@@ -238,7 +231,7 @@ def detect_conflicts_with_llm(
                         f"{item.requirement_id} x "
                         f"{item.conflicting_requirement_id}"
                     ),
-                    explanation="Conflito identificado pelo agente Agno/Groq.",
+                    explanation="Conflito identificado pelo agente Agno.",
                 )
             ],
             confidence=item.confidence,
@@ -422,7 +415,3 @@ def _is_valid_llm_conflict(item, valid_ids: set[str]) -> bool:
     if item.requirement_id == item.conflicting_requirement_id:
         return False
     return True
-
-
-def _parse_llm_payload(response, schema_type):
-    return parse_structured_response(response, schema_type, "Conflict Analyst")

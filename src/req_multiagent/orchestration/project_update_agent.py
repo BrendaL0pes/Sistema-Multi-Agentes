@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from req_multiagent.config import load_settings
-from req_multiagent.llm_utils import run_groq_json
+from req_multiagent.llm_utils import run_structured_agent
 from req_multiagent.models import (
     ConsolidatedReport,
     Requirement,
@@ -41,6 +41,90 @@ class ProjectAnswerPayload(BaseModel):
     assistant_message: str
 
 
+def create_project_update_agent():
+    """Create the Agno agent responsible for incremental project updates."""
+
+    from agno.agent import Agent
+    from agno.models.groq import Groq
+
+    settings = load_settings()
+    return Agent(
+        name="Project Update Agent",
+        role="Merge new stakeholder conversations into an existing requirements project.",
+        model=Groq(
+            id=settings.model_id,
+            api_key=settings.groq_api_key,
+            timeout=60,
+            max_retries=2,
+            retries=2,
+        ),
+        instructions=[
+            "Responda em portugues.",
+            "Atue como analista de Engenharia de Requisitos.",
+            "Mantenha o projeto isolado: compare apenas requisitos deste projeto.",
+            "Preserve IDs existentes quando atualizar requisito.",
+            "Crie novos requisitos apenas quando houver informacao nova.",
+            "Retorne sempre o conjunto completo atualizado.",
+        ],
+        markdown=True,
+    )
+
+
+def create_adjustment_agent():
+    """Create the Agno agent responsible for interactive requirement adjustments."""
+
+    from agno.agent import Agent
+    from agno.models.groq import Groq
+
+    settings = load_settings()
+    return Agent(
+        name="Requirements Adjustment Agent",
+        role="Apply user instructions to update a requirements project.",
+        model=Groq(
+            id=settings.model_id,
+            api_key=settings.groq_api_key,
+            timeout=60,
+            max_retries=2,
+            retries=2,
+        ),
+        instructions=[
+            "Responda em portugues.",
+            "Atue como agente de ajuste de requisitos.",
+            "Nao invente escopo fora da solicitacao do usuario.",
+            "Preserve rastreabilidade e IDs quando possivel.",
+            "Retorne sempre o conjunto completo atualizado.",
+        ],
+        markdown=True,
+    )
+
+
+def create_chat_agent():
+    """Create the Agno agent responsible for project Q&A."""
+
+    from agno.agent import Agent
+    from agno.models.groq import Groq
+
+    settings = load_settings()
+    return Agent(
+        name="Requirements Chat Agent",
+        role="Answer questions about the current requirements project.",
+        model=Groq(
+            id=settings.model_id,
+            api_key=settings.groq_api_key,
+            timeout=60,
+            max_retries=2,
+            retries=2,
+        ),
+        instructions=[
+            "Responda em portugues.",
+            "Atue como assistente conversacional de Engenharia de Requisitos.",
+            "Responda perguntas sem modificar o projeto.",
+            "Se o usuario pedir uma alteracao, oriente a escrever como comando.",
+        ],
+        markdown=True,
+    )
+
+
 def merge_incremental_conversation(
     current_requirements: list[Requirement],
     new_requirements: list[Requirement],
@@ -64,20 +148,11 @@ def merge_incremental_conversation(
         f"{_requirements_prompt(new_requirements)}\n\n"
         f"Nova conversa completa ({source_name}):\n{transcript_text}"
     )
-    payload = run_groq_json(
+    payload = run_structured_agent(
+        create_project_update_agent(),
         prompt,
         ProjectRequirementsPayload,
         "Project Update Agent",
-        system_instructions=[
-            "Responda em portugues.",
-            "Atue como analista de Engenharia de Requisitos.",
-            "Mantenha o projeto isolado: compare apenas requisitos deste projeto.",
-            "Preserve IDs existentes quando atualizar requisito.",
-            "Crie novos requisitos apenas quando houver informacao nova.",
-            "Retorne sempre o conjunto completo atualizado.",
-        ],
-        model_id=settings.model_id,
-        api_key=settings.groq_api_key,
     )
     return (
         _payload_to_requirements(
@@ -108,19 +183,11 @@ def adjust_requirements_from_instruction(
         f"Requisitos atuais:\n{_requirements_prompt(current_requirements)}\n\n"
         f"Solicitacao do usuario:\n{instruction}"
     )
-    payload = run_groq_json(
+    payload = run_structured_agent(
+        create_adjustment_agent(),
         prompt,
         ProjectRequirementsPayload,
         "Requirements Adjustment Agent",
-        system_instructions=[
-            "Responda em portugues.",
-            "Atue como agente de ajuste de requisitos.",
-            "Nao invente escopo fora da solicitacao do usuario.",
-            "Preserve rastreabilidade e IDs quando possivel.",
-            "Retorne sempre o conjunto completo atualizado.",
-        ],
-        model_id=settings.model_id,
-        api_key=settings.groq_api_key,
     )
     return (
         _payload_to_requirements(
@@ -149,18 +216,11 @@ def answer_project_question(report: ConsolidatedReport, question: str) -> str:
         f"Prioridades:\n{_priorities_prompt(report)}\n\n"
         f"Pergunta do usuario:\n{question}"
     )
-    payload = run_groq_json(
+    payload = run_structured_agent(
+        create_chat_agent(),
         prompt,
         ProjectAnswerPayload,
         "Requirements Chat Agent",
-        system_instructions=[
-            "Responda em portugues.",
-            "Atue como assistente conversacional de Engenharia de Requisitos.",
-            "Responda perguntas sem modificar o projeto.",
-            "Se o usuario pedir uma alteracao, oriente a escrever como comando.",
-        ],
-        model_id=settings.model_id,
-        api_key=settings.groq_api_key,
     )
     return payload.assistant_message
 

@@ -81,13 +81,27 @@ def create_gap_agent():
 def detect_gaps(
     requirements: list[Requirement],
     transcript_path: Path | str | None = None,
+    transcript_text: str | None = None,
     existing_requirements_path: Path | str | None = None,
 ) -> list[GapFinding]:
     """Detect narrative and completeness gaps in requirements and transcripts."""
 
     findings: list[GapFinding] = []
-    if transcript_path is not None:
-        findings.extend(_detect_narrative_gaps(transcript_path))
+    if transcript_text is not None:
+        source = (
+            Path(transcript_path).as_posix()
+            if transcript_path is not None
+            else "transcricao_inline"
+        )
+        findings.extend(_detect_narrative_gaps_from_text(transcript_text, source))
+    elif transcript_path is not None:
+        path = Path(transcript_path)
+        findings.extend(
+            _detect_narrative_gaps_from_text(
+                path.read_text(encoding="utf-8"),
+                path.as_posix(),
+            )
+        )
 
     findings.extend(
         _detect_incompleteness_gaps(
@@ -98,11 +112,13 @@ def detect_gaps(
     return findings
 
 
-def _detect_narrative_gaps(transcript_path: Path | str) -> list[GapFinding]:
-    path = Path(transcript_path)
+def _detect_narrative_gaps_from_text(
+    transcript_text: str,
+    source_path: str,
+) -> list[GapFinding]:
     findings: list[GapFinding] = []
 
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_number, line in enumerate(transcript_text.splitlines(), start=1):
         if not line.strip() or line.startswith("#") or REQUIREMENT_MARKER_PATTERN.match(line):
             continue
 
@@ -126,7 +142,7 @@ def _detect_narrative_gaps(transcript_path: Path | str) -> list[GapFinding]:
                 severity=FindingSeverity.MEDIUM,
                 evidence=[
                     Evidence(
-                        source=path.as_posix(),
+                        source=source_path,
                         excerpt=line.strip(),
                         explanation=(
                             f"Trecho narrativo com sinal de lacuna: '{matched_signal}'."

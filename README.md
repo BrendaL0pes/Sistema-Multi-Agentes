@@ -49,7 +49,27 @@ precisam revisar requisitos antes de implementar funcionalidades.
 - Streamlit
 - SQLite
 - Pytest
-- ChromaDB como dependência preparada para evolução da base vetorial
+- ChromaDB listado como dependência; a indexação atual usa JSON lexical em `vector_store.py`, com `create_chroma_client()` preparado para evolução.
+
+## Agentes Agno
+
+Cada agente é definido em `create_*_agent()` nos módulos `*_agent.py` e executado
+via `run_structured_agent()` em `src/req_multiagent/llm_utils.py` quando a LLM
+está habilitada. O orquestrador conecta as etapas em
+`src/req_multiagent/orchestration/workflow.py`.
+
+| Agente | Arquivo | Papel |
+| ------ | ------- | ----- |
+| Extrator | `ingestion/extractor_agent.py` | Extrai requisitos da transcrição |
+| Ambiguidade | `analysis/ambiguity_agent.py` | Detecta termos vagos com apoio do corpus |
+| Conflito | `analysis/conflict_agent.py` | Compara com base existente e lote atual |
+| Lacunas | `analysis/gap_agent.py` | Identifica regras ausentes e requisitos incompletos |
+| Priorização | `analysis/prioritization_agent.py` | Classifica MoSCoW |
+| Consolidador | `orchestration/consolidator_agent.py` | Gera relatório rastreável |
+| Atualização de projeto | `orchestration/project_update_agent.py` | Incremento e ajustes via chat (Streamlit) |
+
+Modo determinístico (padrão): regras e heurísticas testáveis, sem chamada à API.
+Modo LLM: os mesmos agentes Agno produzem saída estruturada validada por Pydantic.
 
 ## Instalação
 
@@ -66,21 +86,25 @@ manualmente no Windows:
 
 ## Configuração
 
-Copie `.env.example` para `.env` e preencha a chave quando for executar agentes
-com modelo real.
+Copie `.env.example` para `.env`. O pipeline roda **sem API externa** por padrão.
+Para usar os agentes Agno com Groq, configure a chave e habilite a LLM.
 
 ```env
 MODEL_PROVIDER=groq
 MODEL_ID=llama-3.3-70b-versatile
-USE_LLM_AGENTS=true
+USE_LLM_AGENTS=false
 GROQ_API_KEY=your-groq-api-key
 DATABASE_PATH=storage/requirements.db
 KNOWLEDGE_BASE_PATH=storage/knowledge_base
 ```
 
-Por padrão, o projeto usa a LLM Groq em todos os agentes quando `GROQ_API_KEY`
-está configurada. Para rodar sem API externa, desligue a opção **Usar LLM
-Groq** na interface ou defina `USE_LLM_AGENTS=false` no `.env`.
+Comportamento:
+
+- `USE_LLM_AGENTS=false` (padrão): modo determinístico, reprodutível e sem custo de API.
+- `USE_LLM_AGENTS=true` + `GROQ_API_KEY` válida: agentes Agno executam via `agent.run()`.
+- `USE_LLM_AGENTS=true` sem chave: fallback automático para o modo determinístico, com aviso no resultado.
+
+Na interface Streamlit, o toggle **Usar LLM Groq** só fica habilitado quando `GROQ_API_KEY` está configurada.
 
 ## Execução
 
@@ -168,13 +192,15 @@ A ingestão começa em `src/req_multiagent/ingestion/extractor_agent.py`.
 A base de conhecimento local fica em `src/req_multiagent/ingestion/vector_store.py`.
 Ela lê documentos de `docs/corpus/` e `data/existing_requirements/`, divide o
 conteúdo em blocos por parágrafos e grava um índice local em JSON no caminho
-configurado por `KNOWLEDGE_BASE_PATH`.
+configurado por `KNOWLEDGE_BASE_PATH`. A função `create_chroma_client()` prepara
+integração futura com ChromaDB sem alterar os módulos consumidores.
 
 ## Estratégia de Análise
 
 A análise fica em `src/req_multiagent/analysis/`. Cada módulo possui um agente
-Agno e funções determinísticas testáveis, além de variantes com LLM quando
-`USE_LLM_AGENTS=true`.
+Agno (`create_*_agent()`), funções determinísticas testáveis e variantes LLM
+(`*_with_llm`) acionadas pelo workflow quando `resolve_use_llm()` em
+`src/req_multiagent/config.py` autoriza o uso da API.
 
 ### Agente de Ambiguidade
 
@@ -190,7 +216,7 @@ Arquivo: `src/req_multiagent/analysis/conflict_agent.py`
 
 - `detect_conflicts()`: compara requisitos extraídos com a base existente e com
   o lote atual.
-- `detect_conflicts_with_llm()`: variante com Groq para execuções com modelo real.
+- `detect_conflicts_with_llm()`: variante Agno para execuções com modelo real.
 - Saída: `ConflictFinding` com IDs conflitantes e justificativa.
 
 ### Agente de Priorização
@@ -198,7 +224,7 @@ Arquivo: `src/req_multiagent/analysis/conflict_agent.py`
 Arquivo: `src/req_multiagent/analysis/prioritization_agent.py`
 
 - `prioritize_requirements()`: aplica MoSCoW considerando ambiguidades e conflitos.
-- `prioritize_requirements_with_llm()`: variante com Groq.
+- `prioritize_requirements_with_llm()`: variante Agno.
 - Regras determinísticas: conflito → `wont`, ambiguidade → `could`, fluxo crítico
   → `must`, demais casos → `should` ou `could`.
 
@@ -207,7 +233,7 @@ Arquivo: `src/req_multiagent/analysis/prioritization_agent.py`
 Arquivo: `src/req_multiagent/analysis/gap_agent.py`
 
 - `detect_gaps()`: identifica trechos narrativos sem regra formal e requisitos
-  incompletos em relação à base existente.
+  incompletos em relação à base existente; integrado ao workflow e ao relatório.
 - Saída: `GapFinding` com tópico, explicação e perguntas de clarificação.
 
 ## Validação da Análise
@@ -224,19 +250,26 @@ Arquivo: `src/req_multiagent/analysis/gap_agent.py`
 | `transcript_03_approvals.md` | gestor ausente e registro incompleto | lacuna |
 | `transcript_01_checkout.md` | must/could/wont após análise | priorização |
 
+Rodar a suíte completa de testes:
+
+```bash
+uv run pytest -v
+```
+
 Rodar testes da ingestão, base e análise:
 
 ```bash
-uv run pytest tests/test_extractor_agent.py tests/test_vector_store.py tests/test_ambiguity_agent.py tests/test_conflict_agent.py tests/test_prioritization_agent.py tests/test_gap_agent.py tests/test_analysis_pipeline.py -v
+uv run pytest tests/test_extractor_agent.py tests/test_vector_store.py tests/test_ambiguity_agent.py tests/test_conflict_agent.py tests/test_prioritization_agent.py tests/test_gap_agent.py tests/test_analysis_pipeline.py tests/test_agno_agents.py -v
 ```
 
-Rodar teste de integração do workflow:
+Rodar testes de integração do workflow:
 
 ```bash
 uv run pytest tests/test_workflow.py -v
 ```
 
-Os testes determinísticos não exigem `GROQ_API_KEY`.
+Os testes determinísticos e de integração não exigem `GROQ_API_KEY`. A suíte atual
+conta com 32 testes automatizados.
 
 ## Persistência
 
@@ -262,12 +295,13 @@ versionados em `data/` e `docs/`.
 
 ### Agno e Agentic AI
 
-- [x] O sistema usa Python.
-- [x] O sistema usa o framework Agno nos módulos de agentes.
-- [x] O sistema implementa agentes de extração, ambiguidade, conflito, priorização e consolidação.
-- [x] O uso dos agentes é necessário para o fluxo principal.
+- [x] O sistema usa Python (`pyproject.toml`, módulos em `src/req_multiagent/`).
+- [x] O sistema usa o framework Agno (`agno>=1.4.0`, factories em `*_agent.py`).
+- [x] O sistema implementa agentes de extração, ambiguidade, conflito, lacunas, priorização, consolidação e atualização de projeto.
+- [x] O uso dos agentes é necessário para o fluxo principal com LLM; o modo determinístico cobre demonstração e testes sem API.
 - [x] Prompts/instruções dos agentes estão versionados nos arquivos `*_agent.py`.
-- [x] O sistema usa workflow, base de conhecimento e persistência.
+- [x] Execução LLM via Agno: `run_structured_agent()` em `llm_utils.py` chama `agent.run(output_schema=...)`.
+- [x] O sistema usa workflow (`orchestration/workflow.py`), base de conhecimento (`ingestion/vector_store.py`) e persistência (`persistence/repository.py`).
 
 ### Memória, Persistência ou Base de Conhecimento
 
@@ -287,9 +321,10 @@ versionados em `data/` e `docs/`.
 
 ### Interface ou Execução
 
-- [x] O sistema oferece CLI e Streamlit.
-- [x] O fluxo principal pode ser executado seguindo este README.
-- [x] O projeto inclui dados e comandos de exemplo.
+- [x] O sistema oferece CLI (`scripts/run_pipeline.py`) e Streamlit (`interface/streamlit_app.py`).
+- [x] O fluxo principal pode ser executado seguindo este README sem API externa.
+- [x] O projeto inclui dados sintéticos em `data/` e comandos de exemplo nesta seção.
+- [x] Lacunas aparecem no relatório Markdown, na aba Streamlit e no histórico SQLite.
 
 ### Reprodutibilidade
 
@@ -311,7 +346,7 @@ versionados em `data/` e `docs/`.
 - [x] O código usa nomes descritivos.
 - [x] O código usa type hints nas assinaturas principais.
 - [x] Funções e classes duráveis têm docstrings.
-- [x] O projeto possui testes e exemplos executáveis.
+- [x] O projeto possui 32 testes automatizados (`tests/`, comando `uv run pytest -v`).
 - [x] O projeto trata erros esperados no fluxo principal.
 
 ### Segurança e Dados
@@ -323,15 +358,21 @@ versionados em `data/` e `docs/`.
 
 ## Limitações Conhecidas
 
-- A extração de conversa natural usa heurísticas e pode exigir revisão humana.
-- A detecção de ambiguidade depende de `weak_words_ptbr.json` e consulta lexical
-  simples ao corpus ISO 29148.
-- A detecção de conflitos cobre padrões explícitos usados na demonstração.
-- A detecção de lacunas usa sinais narrativos e regras de completude.
-- A priorização MoSCoW usa regras simples e deve ser revisada por stakeholders.
-- A execução com modelo real depende de `GROQ_API_KEY`.
-- A release/tag deve ser criada manualmente antes da entrega final.
+- A extração de conversa natural usa heurísticas no modo determinístico e pode exigir revisão humana.
+- A detecção de ambiguidade depende de `weak_words_ptbr.json` e consulta lexical simples ao corpus ISO 29148.
+- A detecção de conflitos cobre padrões explícitos usados na demonstração; a variante LLM pode variar conforme o modelo.
+- A detecção de lacunas usa sinais narrativos e regras de completude contra a base existente.
+- A priorização MoSCoW usa regras simples no modo determinístico e deve ser revisada por stakeholders.
+- A indexação atual da base de conhecimento é JSON lexical; ChromaDB está preparado, mas não é o backend padrão.
+- A execução com modelo real depende de `GROQ_API_KEY` e de `USE_LLM_AGENTS=true`.
+- O grupo possui 3 integrantes; o enunciado prevê grupos de 4 a 6 — confirmar regularização com o professor.
+- A release/tag e o vídeo de apresentação ainda precisam ser criados antes da entrega final.
 
-## Entrega
+## Entrega final
 
-Consulte `docs/delivery_checklist.md` para a checklist de release/tag e vídeo.
+Antes de enviar no Moodle:
+
+1. Criar tag ou release no GitHub (`v1.0.0`).
+2. Confirmar acesso do professor `paulosevero` ao repositório privado.
+3. Gravar vídeo demonstrando tema, fluxo, agentes Agno, persistência e limitações.
+4. Enviar link do vídeo e da release/tag no Moodle.

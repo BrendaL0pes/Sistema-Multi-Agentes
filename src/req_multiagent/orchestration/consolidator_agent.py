@@ -5,11 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from req_multiagent.config import load_settings
-from req_multiagent.llm_utils import parse_structured_response, run_groq_json
+from req_multiagent.llm_utils import run_structured_agent
 from req_multiagent.models import (
     AmbiguityFinding,
     ConflictFinding,
     ConsolidatedReport,
+    GapFinding,
     PriorityAssessment,
     Requirement,
 )
@@ -48,17 +49,19 @@ def consolidate_report(
     ambiguities: list[AmbiguityFinding],
     conflicts: list[ConflictFinding],
     priorities: list[PriorityAssessment],
+    gaps: list[GapFinding] | None = None,
 ) -> ConsolidatedReport:
     """Build a consolidated report from workflow outputs."""
 
+    gap_findings = gaps or []
     created_at = datetime.now(UTC)
     timestamp = created_at.strftime("%Y%m%d%H%M%S%f")
     report_id = f"REPORT-{_slugify(transcript_name)}-{timestamp}"
-    limitations = _collect_limitations(ambiguities, conflicts, priorities)
+    limitations = _collect_limitations(ambiguities, conflicts, priorities, gap_findings)
     summary = (
         f"Foram extraidos {len(requirements)} requisitos, com "
-        f"{len(ambiguities)} ambiguidade(s), {len(conflicts)} conflito(s) e "
-        f"{len(priorities)} prioridade(s) MoSCoW."
+        f"{len(ambiguities)} ambiguidade(s), {len(conflicts)} conflito(s), "
+        f"{len(gap_findings)} lacuna(s) e {len(priorities)} prioridade(s) MoSCoW."
     )
 
     return ConsolidatedReport(
@@ -67,6 +70,7 @@ def consolidate_report(
         requirements=requirements,
         ambiguities=ambiguities,
         conflicts=conflicts,
+        gaps=gap_findings,
         priorities=priorities,
         summary=summary,
         limitations=limitations,
@@ -80,6 +84,7 @@ def consolidate_report_with_llm(
     ambiguities: list[AmbiguityFinding],
     conflicts: list[ConflictFinding],
     priorities: list[PriorityAssessment],
+    gaps: list[GapFinding] | None = None,
 ) -> ConsolidatedReport:
     """Build a consolidated report with LLM-generated synthesis fields."""
 
@@ -98,6 +103,7 @@ def consolidate_report_with_llm(
         requirements=requirements,
         ambiguities=ambiguities,
         conflicts=conflicts,
+        gaps=gaps,
         priorities=priorities,
     )
     prompt = (
@@ -107,21 +113,15 @@ def consolidate_report_with_llm(
         f"Requisitos: {len(requirements)}\n"
         f"Ambiguidades: {len(ambiguities)}\n"
         f"Conflitos: {len(conflicts)}\n"
+        f"Lacunas: {len(gaps or [])}\n"
         f"Prioridades: {len(priorities)}\n\n"
         f"Detalhes:\n{render_report_markdown(base_report)}"
     )
-    payload = run_groq_json(
+    payload = run_structured_agent(
+        create_consolidator_agent(),
         prompt,
         LlmConsolidation,
         "Requirements Consolidator",
-        system_instructions=[
-            "Responda em portugues.",
-            "Consolide requisitos, ambiguidades, conflitos e prioridades.",
-            "Preserve rastreabilidade ate a fonte de cada requisito.",
-            "Destaque limitacoes e pontos que exigem revisao humana.",
-        ],
-        model_id=settings.model_id,
-        api_key=settings.groq_api_key,
     )
     base_report.summary = payload.summary
     base_report.limitations = sorted(
@@ -183,6 +183,26 @@ def render_report_markdown(report: ConsolidatedReport) -> str:
     else:
         lines.append("- Nenhum conflito detectado.")
 
+    lines.extend(["", "## Lacunas", ""])
+    if report.gaps:
+        for finding in report.gaps:
+            label = (
+                finding.requirement_id
+                if finding.requirement_id
+                else f"Narrativa ({finding.topic})"
+            )
+            lines.extend(
+                [
+                    f"- **{label}** — {finding.topic}: {finding.explanation}",
+                ]
+            )
+            if finding.clarification_questions:
+                lines.append(
+                    f"  - Pergunta: {finding.clarification_questions[0]}"
+                )
+    else:
+        lines.append("- Nenhuma lacuna detectada.")
+
     lines.extend(["", "## Priorizacao MoSCoW", ""])
     for assessment in report.priorities:
         lines.append(
@@ -204,15 +224,18 @@ def _collect_limitations(
     ambiguities: list[AmbiguityFinding],
     conflicts: list[ConflictFinding],
     priorities: list[PriorityAssessment],
+    gaps: list[GapFinding] | None = None,
 ) -> list[str]:
     limitations: list[str] = []
-    for item in [*ambiguities, *conflicts, *priorities]:
+    for item in [*ambiguities, *conflicts, *priorities, *(gaps or [])]:
         limitations.extend(item.limitations)
 
     if conflicts:
         limitations.append("Requisitos conflitantes exigem decisao humana.")
     if ambiguities:
         limitations.append("Termos ambiguos precisam de clarificacao com stakeholders.")
+    if gaps:
+        limitations.append("Lacunas identificadas exigem definicao formal com stakeholders.")
 
     return sorted(set(limitations))
 
@@ -224,7 +247,3 @@ def _slugify(value: str) -> str:
         .replace(" ", "_")
         .replace("-", "_")
     )
-
-
-def _parse_llm_payload(response, schema_type):
-    return parse_structured_response(response, schema_type, "Requirements Consolidator")

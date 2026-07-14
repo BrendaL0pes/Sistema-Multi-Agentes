@@ -12,7 +12,7 @@ from req_multiagent.ingestion.vector_store import (
     index_documents,
     query_knowledge_base,
 )
-from req_multiagent.llm_utils import parse_structured_response, run_groq_json
+from req_multiagent.llm_utils import run_structured_agent
 from req_multiagent.models import (
     AmbiguityFinding,
     Evidence,
@@ -144,19 +144,11 @@ def detect_ambiguities_with_llm(
         f"Termos fracos conhecidos: {', '.join(item.term for item in weak_words)}\n\n"
         f"Requisitos:\n{_requirements_prompt(requirements)}"
     )
-    payload = run_groq_json(
+    payload = run_structured_agent(
+        create_ambiguity_agent(),
         prompt,
         LlmAmbiguityFindings,
         "Ambiguity Analyst",
-        system_instructions=[
-            "Responda em portugues.",
-            "Identifique termos vagos em requisitos de software.",
-            "Cruze os achados com criterios de qualidade e termos fracos do corpus.",
-            "Gere perguntas objetivas de clarificacao para cada ambiguidade.",
-            "Nao invente ambiguidades quando o requisito ja for verificavel.",
-        ],
-        model_id=settings.model_id,
-        api_key=settings.groq_api_key,
     )
 
     return [
@@ -170,7 +162,7 @@ def detect_ambiguities_with_llm(
                 Evidence(
                     source="llm:ambiguity_agent",
                     excerpt=item.term,
-                    explanation="Ambiguidade identificada pelo agente Agno/Groq.",
+                    explanation="Ambiguidade identificada pelo agente Agno.",
                 )
             ],
             confidence=item.confidence,
@@ -273,7 +265,3 @@ def _requirements_prompt(requirements: list[Requirement]) -> str:
         f"- {item.id} ({item.type.value}): {item.description}"
         for item in requirements
     )
-
-
-def _parse_llm_payload(response, schema_type):
-    return parse_structured_response(response, schema_type, "Ambiguity Analyst")
