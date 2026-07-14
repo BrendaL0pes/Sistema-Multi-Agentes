@@ -367,6 +367,13 @@ def _render_result(result, repository, persist: bool) -> None:
     with tabs[5]:
         _render_adjustment_chat(report, repository, persist)
     with tabs[6]:
+        st.download_button(
+            label="⬇️ Baixar Relatório (.md)",
+            data=result.report_markdown,
+            file_name=f"relatorio_reqlens.md",
+            mime="text/markdown",
+            type="primary"
+        )
         st.markdown(result.report_markdown)
 
 
