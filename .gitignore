@@ -29,6 +29,7 @@ storage/
 *.sqlite3
 
 pytest-cache-files-*/
+.tmp_pytest/
 
 .DS_Store
 Thumbs.db
